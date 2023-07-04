@@ -1,0 +1,6 @@
+[submodule "tb/riscv-tests"]
+	path = tb/riscv-tests
+	url = https://github.com/riscv-software-src/riscv-tests.git
+[submodule "tb/elf2hex"]
+	path = tb/elf2hex
+	url = https://github.com/sifive/elf2hex.git
