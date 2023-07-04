@@ -9,5 +9,5 @@ FILES=( ${UNIT_TEST_GLOB[@]} )
 for file in "${FILES[@]}"; do
     name=$(basename "$file")
     echo "${name}"
-    "${ELF2HEX}" --bit-width 32 --input "${file}" --output "${name}.text_hex_dump"
+    "${ELF2HEX}" --bit-width 32 --input "${file}" --output "${name}.hex"
 done
