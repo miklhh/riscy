@@ -6,6 +6,7 @@ Libraries:
     #The paths where the source files for this library can be found. Use "**" to match arbitrarily nested directories.
       paths:
         - "tb/**.vhdl"
+        - "rtl/**.vhdl"
 
     #Point to the IEEE standard libraries
     - name: ieee

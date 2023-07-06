@@ -1,8 +1,8 @@
 --
--- Synchronous generic RAM with asynchronous 'cheat' back port for writing and initialization.
+-- Synchronous generic RAM with asynchronous 'cheat' back port for initialization.
 -- This RAM is NOT synthesizable and is only to be used in simulations.
 --
--- Author: Mikael Henriksson
+-- Author: Mikael Henriksson (2022)
 --
 
 library ieee;
@@ -20,7 +20,7 @@ package ram_generic_package is
             word_length    : natural := 32;
 
             -- Total number of words in the RAM
-            words          : natural := 0x8000;
+            words          : natural := 16#8000#;
 
             -- Filename of file which content will be used to initialize the RAM. Each word in the
             -- RAM will be initialized with the content of one row from the file.
@@ -53,11 +53,7 @@ package ram_generic_package is
             ce          : in std_logic;
             address     : in std_logic_vector(integer(ceil(log2(real(words)))) - 1 downto 0);
             data_in     : in std_logic_vector(word_length - 1 downto 0);
-            data_out    : out std_logic_vector(word_length - 1 downto 0);
-
-            -- Asynchronous write port (e.g., for setting the initial content of the RAM)
-            as_write    : in std_logic;
-            as_data_in  : in memory_data_type(0 to words - 1)(word_length - 1 downto 0)
+            data_out    : out std_logic_vector(word_length - 1 downto 0)
         );
     end component;
 
@@ -113,6 +109,14 @@ package body ram_generic_package is
 
             -- Read memory content from file, one word (line) at a time
             for word in 0 to words-1 loop
+
+                -- Make sure file contains another line to read
+                if endfile(fd) then
+                    -- No more data in file, fill memory with unknowns
+                    memory(word) := (others => 'U');
+                    next;
+                end if;
+
                 readline(fd, line_content);
                 if line_len /= 0 then
 
@@ -169,7 +173,7 @@ entity ram_generic is
         word_length    : natural := 32;
 
         -- Total number of words in the RAM
-        words          : natural := 0x4000;
+        words          : natural := 16#8000#;
 
         -- Filename of file which content will be used to initialize the RAM. Each word in the RAM
         -- will be initialized with the content of one row from the file.
@@ -202,11 +206,7 @@ entity ram_generic is
         ce          : in std_logic;
         address     : in std_logic_vector(integer(ceil(log2(real(words)))) - 1 downto 0);
         data_in     : in std_logic_vector(word_length - 1 downto 0);
-        data_out    : out std_logic_vector(word_length - 1 downto 0);
-
-        -- Asynchronous write port (e.g., for setting the initial content of the RAM)
-        as_write    : in std_logic;
-        as_data_in  : in memory_data_type(0 to words - 1)(word_length - 1 downto 0)
+        data_out    : out std_logic_vector(word_length - 1 downto 0)
     );
 end entity ram_generic;
 
@@ -230,20 +230,15 @@ begin
     end process read_proc;
 
     --
-    -- Synchronous + asynchronous write port
+    -- Write port
     --
-    write_proc : process(clk, as_write, as_data_in, ce, rw, address, data_in)
+    write_proc : process(clk)
     begin
         -- Synchronous write
         if rising_edge(clk) then
             if ce = '1' and rw = '0' then
                 mem_space(to_integer(unsigned(address))) <= data_in;
             end if;
-        end if;
-
-        -- Asynchronous write (higher precedence than synchronous write)
-        if as_write = '1' then
-            mem_space <= as_data_in;
         end if;
     end process write_proc;
 
