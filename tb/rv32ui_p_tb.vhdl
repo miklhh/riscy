@@ -3,6 +3,9 @@ context vunit_lib.vunit_context;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
+use work.riscy_conf.fault_type;
+use work.riscy_conf.fault_to_string;
+
 entity rv32ui_p_tb is
     generic(
         -- VUnit runner configuration
@@ -18,6 +21,7 @@ architecture tb_rtl of rv32ui_p_tb is
     signal clk, rst : std_logic;
 
     signal test_complete, test_failure : std_logic;
+    signal core_fault : fault_type;
 begin
 
     --
@@ -43,6 +47,17 @@ begin
     end process;
 
     --
+    -- Fault test
+    --
+    core_fault_test : process
+    begin
+        wait until rising_edge(clk);
+        assert core_fault = NONE
+            report "CPU Core fault: " & fault_to_string(core_fault)
+            severity failure;
+    end process;
+
+    --
     -- clk [1 GHz] and rst generation
     --
     rst <= '1', '0' after 100 ns;
@@ -52,7 +67,7 @@ begin
     
 
     --
-    -- Design under test (RiscV CPU)
+    -- Design under test (RISC-V CPU)
     --
     DUT : entity work.riscy_top
     generic map(
@@ -63,7 +78,8 @@ begin
         rst=>rst,
 
         test_complete=>test_complete,
-        test_failure=>test_failure
+        test_failure=>test_failure,
+        core_fault=>core_fault
     );
 
 end architecture tb_rtl;

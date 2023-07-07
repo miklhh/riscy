@@ -13,13 +13,19 @@ vu = VUnit.from_argv(argv=['--output-path', f'{tb_path}/vunit_out'] + argv[1:])
 
 lib = vu.add_library("lib")
 lib.add_source_files([
+
+    # CPU RTL files
     f"{tb_path}/../rtl/*.vhdl",
+
+    # Testbench files
     f"{tb_path}/../tb/rv32ui_p_tb.vhdl",
     f"{tb_path}/../tb/ram_generic.vhdl",
 ])
-lib.set_compile_option("modelsim.vcom_flags", ["-2008", "-check_synthesis"])
-rv32ui_p_tb = lib.test_bench("rv32ui_p_tb")
+lib.set_compile_option("modelsim.vcom_flags", ["-2008", "-check_synthesis", "+acc=rnb"])
+#lib.set_sim_option("modelsim.vsim_flags", ["-novopt"])
 
+
+rv32ui_p_tb = lib.test_bench("rv32ui_p_tb")
 for filename in sorted(listdir(f"{tb_path}/hex/rv32ui-p")):
     if filename.endswith(".hex"):
         rv32ui_p_tb.add_config(
