@@ -1,0 +1,34 @@
+[*]
+[*] GTKWave Analyzer v3.3.104 (w)1999-2020 BSI
+[*] Fri Jul 14 10:20:46 2023
+[*]
+[dumpfile] "/home/mikl/programming/riscy/tb/vunit_out/test_output/lib.rv32ui_p_tb.add_f689377cf27d05d37c63fd7cd2918f125f89e5cf/ghdl/wave.vcd"
+[dumpfile_mtime] "Fri Jul 14 10:12:45 2023"
+[dumpfile_size] 1970922
+[savefile] "/home/mikl/programming/riscy/tb/util/gtkw_rv32ui_p_tb_wave.gtkw"
+[timestart] 0
+[size] 1789 798
+[pos] 29 14
+*-27.949417 0 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[treeopen] rv32ui_p_tb.
+[treeopen] rv32ui_p_tb.dut.
+[treeopen] rv32ui_p_tb.dut.riscy_core.
+[sst_width] 233
+[signals_width] 298
+[sst_expanded] 1
+[sst_vpaned_height] 213
+@200
+-Test:
+@28
+rv32ui_p_tb.test_complete
+rv32ui_p_tb.test_failure
+@200
+-Core #0:
+@28
+rv32ui_p_tb.dut.riscy_core.clk
+rv32ui_p_tb.dut.riscy_core.rst
+@22
+rv32ui_p_tb.dut.riscy_core.pc[31:0]
+rv32ui_p_tb.dut.riscy_core.i_instr_mem_data[31:0]
+[pattern_trace] 1
+[pattern_trace] 0
