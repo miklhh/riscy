@@ -32,15 +32,21 @@ architecture riscy_regfile_rtl of riscy_regfile is
     type regs_type is array(0 to 32-1) of std_logic_vector(XLEN-1 downto 0);
     signal regs : regs_type;
 begin
+
+    -- Register file logic
     process(clk)
     begin
         if rising_edge(clk) then
             o_rdata1 <= regs(to_integer(i_radr1));
             o_rdata2 <= regs(to_integer(i_radr2));
             if i_wena = '1' then
-                regs(to_integer(i_wadr)) <= i_wdata;
+                if i_wadr /= 0 then
+                    regs(to_integer(i_wadr)) <= i_wdata;
+                end if;
+                regs(0) <= (others => '0');
             end if;
         end if;
     end process;
+
 end architecture riscy_regfile_rtl;
 

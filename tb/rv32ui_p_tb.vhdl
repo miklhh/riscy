@@ -13,7 +13,8 @@ entity rv32ui_p_tb is
         tb_path     : string;   -- Absolute path to this testbench
 
         -- Path to hex dump of unit test memory data
-        hex_dump_filename : string
+        hex_dump_file : string;
+        test_name     : string
     );
 end entity rv32ui_p_tb;
 
@@ -41,9 +42,7 @@ begin
     time_out_test : process
     begin
         wait for 100 us;
-        assert false
-            report "Timeout: more than 100 000 clk cycles passed without success"
-            severity failure;
+        report "Timeout: more than 100 000 clk cycles passed without success" severity failure;
     end process;
 
     --
@@ -53,8 +52,7 @@ begin
     begin
         wait until rising_edge(clk);
         assert core_fault = NONE
-            report "CPU Core fault: " & fault_to_string(core_fault)
-            severity failure;
+            report "CPU Core fault: " & fault_to_string(core_fault) severity failure;
     end process;
 
     --
@@ -71,7 +69,7 @@ begin
     --
     DUT : entity work.riscy_top
     generic map(
-        hex_dump_file=>tb_path & "hex/rv32ui-p/" & hex_dump_filename
+        hex_dump_file=>hex_dump_file
     )
     port map (
         clk=>clk,

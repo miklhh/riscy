@@ -27,20 +27,30 @@ entity riscy_core is
 end entity riscy_core;
 
 architecture riscy_core_rtl of riscy_core is
-    signal PC           : unsigned(XLEN-1 downto 0);
+
+    -- Program counter
+    type PC_vector_type is array(0 to 4) of unsigned(XLEN-1 downto 0);
+    signal PC_mux               : unsigned(XLEN-1 downto 0);
+    signal PC                   : PC_vector_type;
 
     -- Instruction register pipeline
     type IR_pipeline_type is array(0 to 3) of std_logic_vector(XLEN-1 downto 0);
     type IR_debug_pipeline_type is array(0 to 3) of inst_type;
-    signal IR           : IR_pipeline_type;
-    signal IR_debug     : IR_debug_pipeline_type;
+    signal IR                   : IR_pipeline_type;
+    signal IR_debug             : IR_debug_pipeline_type;
 
     -- Data to/from register file
-    signal rs1_data     : std_logic_vector(XLEN-1 downto 0);
-    signal rs2_data     : std_logic_vector(XLEN-1 downto 0);
-    signal reg_i_data   : std_logic_vector(XLEN-1 downto 0);
-    signal reg_i_adr    : unsigned(4 downto 0);
-    signal reg_i_wen    : std_logic;
+    signal rs1_data, rs2_data   : std_logic_vector(XLEN-1 downto 0);
+    signal reg_i_data           : std_logic_vector(XLEN-1 downto 0);
+    signal reg_i_adr            : unsigned(4 downto 0);
+    signal reg_i_wen            : std_logic;
+
+    -- Branch signals
+    signal branch_take          : std_logic;
+    signal branch_adr           : unsigned(XLEN-1 downto 0);
+
+    -- CPU skip signal
+    signal skip                : std_logic_vector(0 to 3);
 
 begin
 
@@ -49,29 +59,35 @@ begin
     ------------------------------------------------------------------------------------------------
     ---                                    Instruction fetch                                     ---
     ------------------------------------------------------------------------------------------------
+
     -- Program counter and instruction register
     process(clk)
     begin
         if rising_edge(clk) then
             if rst = '1' then
-                PC <= (others => '0');
+                PC <= (others => (others => '0'));
             else
-                PC <= PC + 4;
+                PC(0) <= PC_mux;
+                PC(1 to 4) <= PC(0 to 3);
             end if;
         end if;
     end process;
     o_instr_mem_ena  <= not(rst);
-    o_instr_mem_addr <= std_logic_vector(PC);
+    o_instr_mem_addr <= std_logic_vector(PC(0));
+    PC_mux <= branch_adr when branch_take = '1' else PC(0)+4;
 
-    -- Instruction register pipeline
+    -- Instruction register pipeline (the instruction memory acts as first IR register)
     IR(0) <= i_instr_mem_data;
     instr_pipeline : process(clk)
     begin
         if rising_edge(clk) then
             if rst = '1' then
-                IR(1 to 3) <= (others => (others => '0'));
+                IR(1 to 3) <= (NOP, NOP, NOP);
             else
                 IR(1 to 3) <= IR(0 to 2);
+                if skip(2) = '1' then
+                    IR(2) <= NOP;
+                end if;
             end if;
         end if;
     end process;
@@ -80,6 +96,16 @@ begin
     ------------------------------------------------------------------------------------------------
     ---                                    Instruction decode                                    ---
     ------------------------------------------------------------------------------------------------
+
+    -- Skip instruction logic
+    skip(0) <= '1' when to_inst(IR(0)).opcode = JAL or to_inst(IR(1)).opcode = JAL else '0';
+    process(clk)
+    begin
+        if rising_edge(clk) then
+            skip(1 to 3) <= skip(0 to 2);
+        end if;
+    end process;
+
     -- Register file
     riscy_regfile: entity work.riscy_regfile
         port map (
@@ -94,35 +120,40 @@ begin
             i_wdata=>reg_i_data
         );
 
-    -- Decode debuging
-    process(IR)
-    begin
-        for i in 0 to 3 loop
-            IR_debug(i) <= to_inst(IR(i));
-        end loop;
-    end process;
-
     -- Branching adder (J-type immediate if JAL and B-type immediate if BRANCH)
-    --process(clk)
-    --begin
-    --    if rising_edge(clk) then
-    --        if to_inst(IR(0)).opcode = opcode.JAL then
-    --            branch_target_adr <= PC + to_imm_j(IR(0));
-    --        else -- OPCODE.BRNACH
-    --            branch_target_adr <= PC + to_imm_b(IR(0));
-    --        end if;
-    --    end if;
-    --end process;
+    process(clk)
+    begin
+        if rising_edge(clk) then
+            if to_inst(IR(0)).opcode = JAL then
+                branch_adr <= unsigned( signed(PC(1)) + to_imm_j(IR(0)) );
+            else -- OPCODE.BRNACH
+                branch_adr <= unsigned( signed(PC(1)) + to_imm_b(IR(0)) );
+            end if;
+        end if;
+    end process;
 
 
     ------------------------------------------------------------------------------------------------
     ---                                    Instruction execute                                   ---
     ------------------------------------------------------------------------------------------------
 
+    -- Branch take logic
+    process(IR)
+    begin
+        if to_inst(IR(1)).opcode = JAL then
+            branch_take <= '1';
+        else
+            branch_take <= '0';
+        end if;
+    end process;
+
+    -- ALU
+    -- TODO:
 
     ------------------------------------------------------------------------------------------------
     ---                                        Memory                                            ---
     ------------------------------------------------------------------------------------------------
+
     
 
     ------------------------------------------------------------------------------------------------
@@ -130,6 +161,19 @@ begin
     ------------------------------------------------------------------------------------------------
     reg_i_adr <= to_inst(IR(3)).rd;
     reg_i_data <= std_logic_vector(to_imm_i(IR(3)));
-    reg_i_wen <= '1';
+    reg_i_wen <= '1' when to_inst(IR(3)).opcode = OP_IMM else '0';
+
+
+    ------------------------------------------------------------------------------------------------
+    ---                                      Misc/other                                          ---
+    ------------------------------------------------------------------------------------------------
+
+    -- Instruction register debuging
+    process(IR)
+    begin
+        for i in 0 to 3 loop
+            IR_debug(i) <= to_inst(IR(i));
+        end loop;
+    end process;
 
 end architecture riscy_core_rtl;

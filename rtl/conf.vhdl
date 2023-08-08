@@ -58,6 +58,11 @@ package riscy_conf is
     function to_imm_u(inst: std_logic_vector) return signed;
     function to_imm_j(inst: std_logic_vector) return signed;
 
+
+    ------------------------------------------------------------------------------------------------
+    ---                                     Instructions                                         ---
+    ------------------------------------------------------------------------------------------------
+    constant NOP : std_logic_vector(XLEN-1 downto 0) := x"00000013";  -- addi 0,0,0
     
     ------------------------------------------------------------------------------------------------
     ---                                    CPU faults types                                      ---

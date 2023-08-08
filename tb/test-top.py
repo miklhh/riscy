@@ -24,13 +24,22 @@ lib.add_source_files([
 lib.set_compile_option("modelsim.vcom_flags", ["-2008", "-check_synthesis", "+acc=rnb"])
 #lib.set_sim_option("modelsim.vsim_flags", ["-novopt"])
 
-
+# VHDL testbench
 rv32ui_p_tb = lib.test_bench("rv32ui_p_tb")
-for filename in sorted(listdir(f"{tb_path}/hex/rv32ui-p-simple")):
+
+# HEX unit test files
+unit_tests_dir = f'{tb_path}/hex'
+unit_test_set = f'rv32ui-p-simple'
+for filename in sorted(listdir(f"{unit_tests_dir}/{unit_test_set}")):
     if filename.endswith(".hex"):
+        test_name = filename.replace('.hex', '').replace('rv32ui-p-', '')
+        test_abs_path = f'{unit_tests_dir}/{unit_test_set}/{filename}'
         rv32ui_p_tb.add_config(
-            name=filename.replace('.hex', '').replace('rv32ui-p-', ''),
-            generics={ "hex_dump_filename": filename }
+            name=test_name,
+            generics={ 
+                "hex_dump_file": test_abs_path,
+                "test_name": test_name,
+            }
         )
 
 
