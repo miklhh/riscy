@@ -16,10 +16,30 @@ package riscy_conf is
 
 
     ------------------------------------------------------------------------------------------------
+    ---                                    Instruction opcodes                                   ---
+    ------------------------------------------------------------------------------------------------
+    type opcode is (
+        UNKNOWN,
+        AUIPC,
+        LUI,
+        OP_IMM,
+        OP,
+        BRANCH,
+        JAL,
+        JALR,
+        LOAD,
+        STORE,
+        MISC_MEM,
+        FENCE,
+        SYSTEM
+    );
+
+
+    ------------------------------------------------------------------------------------------------
     ---                                    Instruction fields                                    ---
     ------------------------------------------------------------------------------------------------
     type inst_type is record
-        opcode  : unsigned(6 downto 0);
+        opcode  : opcode;
         rd      : unsigned(4 downto 0);
         rs1     : unsigned(4 downto 0);
         rs2     : unsigned(4 downto 0);
@@ -27,9 +47,9 @@ package riscy_conf is
         funct7  : unsigned(6 downto 0);
     end record inst_type;
 
-
+    
     ------------------------------------------------------------------------------------------------
-    ---                                Instruction decoding utility                              ---
+    ---                         Instruction/Immediate decoding utility                           ---
     ------------------------------------------------------------------------------------------------
     function to_inst(IR: std_logic_vector) return inst_type;
     function to_imm_i(inst: std_logic_vector) return signed;
@@ -37,23 +57,6 @@ package riscy_conf is
     function to_imm_b(inst: std_logic_vector) return signed;
     function to_imm_u(inst: std_logic_vector) return signed;
     function to_imm_j(inst: std_logic_vector) return signed;
-
-    ------------------------------------------------------------------------------------------------
-    ---                                    Instruction opcodes                                   ---
-    ------------------------------------------------------------------------------------------------
-    type opcode is (
-        AUIPC,
-        LUI,
-        OP_IMM,
-        OP,
-        BRNACH,
-        JAL,
-        JALR,
-        LOAD,
-        STORE,
-        MISC_MEM,
-        SYSTEM
-    );
 
     
     ------------------------------------------------------------------------------------------------
@@ -77,7 +80,7 @@ package body riscy_conf is
             when NONE => return "NONE";
             when UNIMPLEMENTED_INSTRUCTION => return "UNIMPLEMENTED_INSTRUCTION";
             when others => 
-                assert False report "fault_to_string(): unknown fault" severity failure;
+                report "fault_to_string(): unknown fault" severity failure;
                 return "";
         end case;
     end function;
@@ -85,11 +88,28 @@ package body riscy_conf is
     --
     -- Instruction decoding
     --
+    function to_opcode(opcode_bin: std_logic_vector) return opcode is
+    begin
+        case opcode_bin is
+            when "0110111" => return LUI;
+            when "0010111" => return AUIPC;
+            when "1101111" => return JAL;
+            when "1100011" => return BRANCH;
+            when "0000011" => return LOAD;
+            when "0100011" => return STORE;
+            when "0010011" => return OP_IMM;
+            when "0110011" => return OP;
+            when "0001111" => return FENCE;
+            when "1110011" => return SYSTEM;
+            when others => return UNKNOWN;
+        end case;
+    end function;
+
     function to_inst(IR: std_logic_vector) return inst_type is
         variable res : inst_type;
     begin
         res := (
-            opcode => unsigned(IR(6  downto  0)),
+            opcode => to_opcode(IR(6  downto  0)),
             rd =>     unsigned(IR(11 downto  7)),
             rs1 =>    unsigned(IR(19 downto 15)),
             rs2 =>    unsigned(IR(24 downto 20)),

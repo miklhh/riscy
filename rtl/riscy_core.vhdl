@@ -2,6 +2,7 @@
 -- Riscy RISC-V CPU core
 -- Author: Mikael Henriksson (2023)
 --
+
 library ieee, work;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -26,15 +27,21 @@ entity riscy_core is
 end entity riscy_core;
 
 architecture riscy_core_rtl of riscy_core is
-    signal PC : unsigned(XLEN-1 downto 0);
+    signal PC           : unsigned(XLEN-1 downto 0);
 
     -- Instruction register pipeline
     type IR_pipeline_type is array(0 to 3) of std_logic_vector(XLEN-1 downto 0);
-    signal IR : IR_pipeline_type;
+    type IR_debug_pipeline_type is array(0 to 3) of inst_type;
+    signal IR           : IR_pipeline_type;
+    signal IR_debug     : IR_debug_pipeline_type;
 
-    -- Data from register file
-    signal rs1_data : std_logic_vector(XLEN-1 downto 0);
-    signal rs2_data : std_logic_vector(XLEN-1 downto 0);
+    -- Data to/from register file
+    signal rs1_data     : std_logic_vector(XLEN-1 downto 0);
+    signal rs2_data     : std_logic_vector(XLEN-1 downto 0);
+    signal reg_i_data   : std_logic_vector(XLEN-1 downto 0);
+    signal reg_i_adr    : unsigned(4 downto 0);
+    signal reg_i_wen    : std_logic;
+
 begin
 
     o_fault <= NONE;
@@ -82,10 +89,18 @@ begin
             o_rdata1=>rs1_data,
             i_radr2 =>to_inst(IR(0)).rs2,
             o_rdata2=>rs2_data,
-            i_wadr=>(others => '0'),
-            i_wena=>'0',
-            i_wdata=>(others => '0') 
+            i_wadr=>reg_i_adr,
+            i_wena=>reg_i_wen,
+            i_wdata=>reg_i_data
         );
+
+    -- Decode debuging
+    process(IR)
+    begin
+        for i in 0 to 3 loop
+            IR_debug(i) <= to_inst(IR(i));
+        end loop;
+    end process;
 
     -- Branching adder (J-type immediate if JAL and B-type immediate if BRANCH)
     --process(clk)
@@ -108,10 +123,13 @@ begin
     ------------------------------------------------------------------------------------------------
     ---                                        Memory                                            ---
     ------------------------------------------------------------------------------------------------
-
+    
 
     ------------------------------------------------------------------------------------------------
     ---                                       Writeback                                          ---
     ------------------------------------------------------------------------------------------------
+    reg_i_adr <= to_inst(IR(3)).rd;
+    reg_i_data <= std_logic_vector(to_imm_i(IR(3)));
+    reg_i_wen <= '1';
 
 end architecture riscy_core_rtl;
