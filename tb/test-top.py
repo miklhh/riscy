@@ -26,7 +26,7 @@ lib.set_compile_option("modelsim.vcom_flags", ["-2008", "-check_synthesis", "+ac
 
 
 rv32ui_p_tb = lib.test_bench("rv32ui_p_tb")
-for filename in sorted(listdir(f"{tb_path}/hex/rv32ui-p")):
+for filename in sorted(listdir(f"{tb_path}/hex/rv32ui-p-simple")):
     if filename.endswith(".hex"):
         rv32ui_p_tb.add_config(
             name=filename.replace('.hex', '').replace('rv32ui-p-', ''),
