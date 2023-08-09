@@ -13,11 +13,11 @@ entity riscy_regfile is
     port(
         clk, rst    : in std_logic;
 
-        -- Read port 0
+        -- Read port 1 (RS1)
         i_radr1     : in unsigned(4 downto 0);
         o_rdata1    : out std_logic_vector(XLEN-1 downto 0);
 
-        -- Read port 1
+        -- Read port 2 (RS2)
         i_radr2     : in unsigned(4 downto 0);
         o_rdata2    : out std_logic_vector(XLEN-1 downto 0);
 

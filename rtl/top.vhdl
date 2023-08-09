@@ -32,10 +32,17 @@ entity riscy_top is
 end entity riscy_top;
 
 architecture riscy_top_rtl of riscy_top is
-    -- Instruction memory signal
+    -- Instruction memory signals
     signal inst_mem_ena     : std_logic;
     signal inst_mem_addr    : std_logic_vector(XLEN-1 downto 0);
     signal inst_mem_data    : std_logic_vector(XLEN-1 downto 0);
+
+    -- Data memory signals
+    signal data_mem_ena     : std_logic;
+    signal data_mem_we      : std_logic;
+    signal data_mem_addr    : std_logic_vector(XLEN-1 downto 0);
+    signal data_mem_data_i  : std_logic_vector(XLEN-1 downto 0);
+    signal data_mem_data_o  : std_logic_vector(XLEN-1 downto 0);
 begin
 
     test_complete <= '0';
@@ -51,10 +58,19 @@ begin
     port map (
         clk=>clk,
         rst =>rst,
+
+        -- Instruction memory
         o_instr_mem_ena=>inst_mem_ena,
         o_instr_mem_addr=>inst_mem_addr,
         i_instr_mem_data=>inst_mem_data,
-        o_fault=>core_fault
+        o_fault=>core_fault,
+
+        -- Data memory
+        o_data_mem_ena=>data_mem_ena,
+        o_data_mem_we=>data_mem_we,
+        o_data_mem_addr=>data_mem_addr,
+        o_data_mem_data=>data_mem_data_i,
+        i_data_mem_data=>data_mem_data_o
     );
 
     --
@@ -85,4 +101,21 @@ begin
         data_out=>inst_mem_data
     );
 
+    --
+    -- Test bench data memory
+    --
+    data_memory : entity work.ram_generic
+    generic map (
+        word_length=>32,
+        words=>16#1000#,
+        init_file_name=>hex_dump_file
+    )
+    port map (
+        clk=>clk,
+        rw=>not(data_mem_we),
+        ce=>data_mem_ena,
+        address=>data_mem_addr(13 downto 2),
+        data_in=>data_mem_data_i,
+        data_out=>data_mem_data_o
+    );
 end architecture riscy_top_rtl;
