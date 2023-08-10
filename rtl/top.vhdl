@@ -13,20 +13,20 @@ entity riscy_top is
     generic(
 
         -- Cache settings
-        l1cache         : boolean := false;
-        l2cache         : boolean := false;
+        l1cache             : boolean := false;
+        l2cache             : boolean := false;
 
         -- Unit test hex dump filename (set to empty if not a unit test)
-        hex_dump_file   : string := ""
+        hex_dump_file       : string := ""
     );
     port(
-        clk             : in std_logic;
-        rst             : in std_logic;
+        clk                 : in std_logic;
+        rst                 : in std_logic;
 
-        -- unit testing signals
-        test_complete   : out std_logic;
-        test_failure    : out std_logic;
-        core_fault      : out fault_type
+        -- CPU core fault and environment 
+        o_core_fault        : out fault_type;
+        o_ecall             : out std_logic;
+        o_ecall_regs        : out regfile_vector_type
     );
 
 end entity riscy_top;
@@ -45,9 +45,6 @@ architecture riscy_top_rtl of riscy_top is
     signal data_mem_data_o  : std_logic_vector(XLEN-1 downto 0);
 begin
 
-    test_complete <= '0';
-    test_failure <= '0';
-
     --
     -- Signle RiscY CPU core
     --
@@ -56,21 +53,25 @@ begin
         hartid => 0
     )
     port map (
-        clk=>clk,
-        rst =>rst,
+        i_clk=>clk,
+        i_rst=>rst,
 
         -- Instruction memory
         o_instr_mem_ena=>inst_mem_ena,
         o_instr_mem_addr=>inst_mem_addr,
         i_instr_mem_data=>inst_mem_data,
-        o_fault=>core_fault,
 
         -- Data memory
         o_data_mem_ena=>data_mem_ena,
         o_data_mem_we=>data_mem_we,
         o_data_mem_addr=>data_mem_addr,
         o_data_mem_data=>data_mem_data_i,
-        i_data_mem_data=>data_mem_data_o
+        i_data_mem_data=>data_mem_data_o,
+
+        -- CPU core fault and environment 
+        o_core_fault=>o_core_fault,
+        o_ecall=>o_ecall,
+        o_ecall_regs=>o_ecall_regs
     );
 
     --

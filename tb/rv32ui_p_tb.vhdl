@@ -3,8 +3,7 @@ context vunit_lib.vunit_context;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
-use work.riscy_conf.fault_type;
-use work.riscy_conf.fault_to_string;
+use work.riscy_conf.all;
 
 entity rv32ui_p_tb is
     generic(
@@ -19,10 +18,15 @@ entity rv32ui_p_tb is
 end entity rv32ui_p_tb;
 
 architecture tb_rtl of rv32ui_p_tb is
-    signal clk, rst : std_logic;
 
-    signal test_complete, test_failure : std_logic;
-    signal core_fault : fault_type;
+    -- Clock, reset
+    signal clk, rst         : std_logic;
+
+    -- CPU core fault and environment 
+    signal core_fault       : fault_type;
+    signal ecall            : std_logic;
+    signal ecall_regs       : regfile_vector_type;
+
 begin
 
     --
@@ -32,27 +36,48 @@ begin
     begin
         test_runner_setup(runner, runner_cfg);
         wait until rst = '0';
-        wait until test_complete = '1';
+        -- Test finish successfully iff gp=1 and a0=0 during an ECALL
+        wait until ecall = '1' and unsigned(ecall_regs(3)) = 1 and unsigned(ecall_regs(10)) = 0;
         test_runner_cleanup(runner);
     end process;
 
     --
-    -- Time-out test
+    -- Time-out tester
     --
-    time_out_test : process
+    time_out_tester : process
     begin
         wait for 100 us;
         report "Timeout: more than 100 000 clk cycles passed without success" severity failure;
     end process;
 
     --
-    -- Fault test
+    -- Core fault tester
     --
-    core_fault_test : process
+    core_fault_tester : process
     begin
         wait until rising_edge(clk);
-        assert core_fault = NONE
-            report "CPU Core fault: " & fault_to_string(core_fault) severity failure;
+
+        -- First test if 
+        if core_fault /= NONE then
+            case core_fault is
+                when UNIMPLEMENTED_INSTRUCTION =>
+                    report "CPU core fault: UNIMPLEMENTED_INSTRUCTION" severity failure;
+                when others =>
+                    report "CPU core fault: UNKNOWN" severity failure;
+            end case;
+        end if;
+    end process;
+
+    --
+    -- Unit test failure test
+    --
+    unit_test_fail_tester : process
+    begin
+        wait until ecall = '1';
+        assert unsigned(ecall_regs(3)) = 1 and unsigned(ecall_regs(10)) = 0
+            report "Unit test failure (" & test_name & "): #" & 
+                integer'image(to_integer(unsigned(ecall_regs(3)))/2)
+                severity failure;
     end process;
 
     --
@@ -62,7 +87,6 @@ begin
     process begin
         clk <= '0'; loop wait for 5 ns; clk <= not(clk); end loop;
     end process;
-    
 
     --
     -- Design under test (RISC-V CPU)
@@ -75,9 +99,10 @@ begin
         clk=>clk,
         rst=>rst,
 
-        test_complete=>test_complete,
-        test_failure=>test_failure,
-        core_fault=>core_fault
+        -- CPU core fault and environment 
+        o_core_fault=>core_fault,
+        o_ecall=>ecall,
+        o_ecall_regs=>ecall_regs
     );
 
 end architecture tb_rtl;

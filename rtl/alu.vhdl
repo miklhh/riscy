@@ -11,7 +11,7 @@ use work.riscy_conf.all;
 
 entity riscy_alu is
     port(
-        clk, rst    : in std_logic;
+        i_clk, i_rst : in std_logic;
 
         -- Input 1 (RS1)
         i_data1     : in std_logic_vector(XLEN-1 downto 0);
@@ -38,7 +38,6 @@ architecture riscy_alu_rtl of riscy_alu is
     signal add_res      : signed(XLEN+1 downto 0);
     signal sub          : std_logic;
     signal add_signed   : std_logic;
-    signal slt          : std_logic_vector(XLEN-1 downto 0);
 
     -- Left barrel shifter
     signal lshift_in    : signed(XLEN-1 downto 0);
@@ -66,19 +65,10 @@ begin
     add_opb(0) <= sub;
     add_opb(32 downto 1) <= signed(not(i_data2)) when sub = '1' else signed(i_data2);
     add_opb(33) <= add_opb(32) when add_signed = '1' else '0';
+    add_signed <= '0';
 
-    -- SLT and SLTU exclusivly controls the sign bit
-    add_signed <= not(i_funct3(0));
-    slt <= X"00000001" when add_res(33) = '1' else X"00000000";
-
-    -- Subtraction is only needed when performing SUB, SLT and SLTU
-    sub <= 
-        '1' when i_opcode = "0010011" and (  -- OP_IMM
-            i_funct3(1) = '1'
-        ) else 
-        '1' when i_opcode = "0110011" and (  -- OP
-            i_funct3(1) = '1' or i_funct7(5) = '1'
-        ) else '0';
+    -- Subtraction is only needed when performing SUB.
+    sub <= '1' when i_opcode = from_opcode(OP) and i_funct3 = "000" and i_funct7(5) = '1' else '0';
 
     -- Left barrel shifter
     lshift_out <= shift_left(lshift_in, lshift_amnt);
@@ -100,8 +90,6 @@ begin
     -- Result multiplexer
     with i_funct3 select result <=
         std_logic_vector(add_res(32 downto 1))      when "000",  -- ADD/SUB
-        std_logic_vector(slt)                       when "010",  -- SLT
-        std_logic_vector(slt)                       when "011",  -- SLTU
         xor_out                                     when "100",  -- XOR
         or_out                                      when "110",  -- OR
         and_out                                     when "111",  -- AND
@@ -110,9 +98,9 @@ begin
         (others => '-')                             when others;
 
     -- Output register
-    process(clk)
+    process(i_clk)
     begin
-        if rising_edge(clk) then
+        if rising_edge(i_clk) then
             if i_opcode = "0110111" then  -- LUI
                 o_data <= i_data2;
             else

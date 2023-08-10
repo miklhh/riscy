@@ -30,7 +30,6 @@ package riscy_conf is
         LOAD,
         STORE,
         MISC_MEM,
-        FENCE,
         SYSTEM
     );
 
@@ -43,11 +42,13 @@ package riscy_conf is
         rd      : unsigned(4 downto 0);
         rs1     : unsigned(4 downto 0);
         rs2     : unsigned(4 downto 0);
-        funct3  : unsigned(2 downto 0);
-        funct7  : unsigned(6 downto 0);
+        funct3  : std_logic_vector(2 downto 0);
+        funct7  : std_logic_vector(6 downto 0);
     end record inst_type;
+    function to_opcode(opcode_bin: std_logic_vector) return opcode;
+    function from_opcode(opc: opcode) return std_logic_vector;
+   
 
-    
     ------------------------------------------------------------------------------------------------
     ---                         Instruction/Immediate decoding utility                           ---
     ------------------------------------------------------------------------------------------------
@@ -64,6 +65,12 @@ package riscy_conf is
     ------------------------------------------------------------------------------------------------
     constant NOP : std_logic_vector(XLEN-1 downto 0) := x"00000013";  -- addi 0,0,0
     
+
+    ------------------------------------------------------------------------------------------------
+    ---                                    Misc data types                                       ---
+    ------------------------------------------------------------------------------------------------
+    type regfile_vector_type is array(0 to 32-1) of std_logic_vector(XLEN-1 downto 0);
+
     ------------------------------------------------------------------------------------------------
     ---                                    CPU faults types                                      ---
     ------------------------------------------------------------------------------------------------
@@ -71,24 +78,11 @@ package riscy_conf is
         NONE,
         UNIMPLEMENTED_INSTRUCTION
     );
-    function fault_to_string(fault : fault_type) return string;
-
 
 end package riscy_conf;
 
 
 package body riscy_conf is
-
-    function fault_to_string(fault : fault_type) return string is
-    begin
-        case fault is
-            when NONE => return "NONE";
-            when UNIMPLEMENTED_INSTRUCTION => return "UNIMPLEMENTED_INSTRUCTION";
-            when others => 
-                report "fault_to_string(): unknown fault" severity failure;
-                return "";
-        end case;
-    end function;
 
     --
     -- Instruction decoding
@@ -104,9 +98,26 @@ package body riscy_conf is
             when "0100011" => return STORE;
             when "0010011" => return OP_IMM;
             when "0110011" => return OP;
-            when "0001111" => return FENCE;
             when "1110011" => return SYSTEM;
+            when "0001111" => return MISC_MEM;
             when others => return UNKNOWN;
+        end case;
+    end function;
+
+    function from_opcode(opc: opcode) return std_logic_vector is
+    begin
+        case opc is
+            when LUI => return      "0110111";
+            when AUIPC => return    "0010111";
+            when JAL => return      "1101111";
+            when BRANCH => return   "1100011";
+            when LOAD => return     "0000011";
+            when STORE => return    "0100011";
+            when OP_IMM => return   "0010011";
+            when OP => return       "0110011";
+            when SYSTEM => return   "1110011";
+            when MISC_MEM => return "0001111";
+            when others => return   "0010011";
         end case;
     end function;
 
@@ -118,8 +129,8 @@ package body riscy_conf is
             rd =>     unsigned(IR(11 downto  7)),
             rs1 =>    unsigned(IR(19 downto 15)),
             rs2 =>    unsigned(IR(24 downto 20)),
-            funct3 => unsigned(IR(14 downto 12)),
-            funct7 => unsigned(IR(31 downto 25))
+            funct3 => IR(14 downto 12),
+            funct7 => IR(31 downto 25)
         );
         return res;
     end function;
