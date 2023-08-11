@@ -50,8 +50,8 @@ architecture riscy_core_rtl of riscy_core is
 
     -- Data to/from register file
     type reg_pipeline_type is array(0 to 2) of std_logic_vector(XLEN-1 downto 0);
-    signal regfile_data1       : std_logic_vector(XLEN-1 downto 0);
-    signal regfile_data2       : std_logic_vector(XLEN-1 downto 0);
+    signal regfile_data1        : std_logic_vector(XLEN-1 downto 0);
+    signal regfile_data2        : std_logic_vector(XLEN-1 downto 0);
     signal rs1_data, rs2_data   : reg_pipeline_type;
     signal reg_i_data           : std_logic_vector(XLEN-1 downto 0);
     signal reg_i_adr            : unsigned(4 downto 0);
@@ -71,8 +71,10 @@ architecture riscy_core_rtl of riscy_core is
     signal alu_o                : alu_out_vector_type;
 
     -- Branch signals
-    signal branch_take          : std_logic;
-    signal branch_adr           : unsigned(XLEN-1 downto 0);
+    signal branch_take0         : std_logic;  -- Take branch (lower priority)
+    signal branch_take1         : std_logic;  -- Take branch (higher priority)
+    signal branch_adr0          : unsigned(XLEN-1 downto 0);
+    signal branch_adr1          : unsigned(XLEN-1 downto 0);
 
     -- CPU skip signal
     signal skip                 : std_logic_vector(0 to 3);
@@ -92,11 +94,8 @@ begin
         if skip(3) = '0' then
             case inst(3).opcode is
                 when UNKNOWN => o_core_fault <= UNIMPLEMENTED_INSTRUCTION;
-                when JALR => o_core_fault <= UNIMPLEMENTED_INSTRUCTION;
                 when LOAD => o_core_fault <= UNIMPLEMENTED_INSTRUCTION;
                 when STORE => o_core_fault <= UNIMPLEMENTED_INSTRUCTION;
-                when AUIPC => o_core_fault <= UNIMPLEMENTED_INSTRUCTION;
-
                 when others => o_core_fault <= NONE;
             end case;
         end if;
@@ -124,7 +123,10 @@ begin
     end process;
     o_instr_mem_ena  <= not(i_rst);
     o_instr_mem_addr <= std_logic_vector(PC(0));
-    PC_mux <= branch_adr when branch_take = '1' else PC(0)+4;
+    PC_mux <= 
+        branch_adr1 when branch_take1 = '1' else
+        branch_adr0 when branch_take0 = '1' else
+        PC(0)+4;
 
     -- Instruction register pipeline (the instruction memory acts as first IR register)
     IR(0) <= i_instr_mem_data;
@@ -153,13 +155,25 @@ begin
     ------------------------------------------------------------------------------------------------
 
     -- Skip instruction logic
-    skip_PC <= '1' when inst(0).opcode = JAL or inst(1).opcode = JAL else '0';
+    skip_PC <= 
+        '1' when 
+            inst(0).opcode = JAL    or 
+            inst(1).opcode = JAL    or
+            inst(0).opcode = JALR   or
+            inst(1).opcode = JALR   or
+            inst(2).opcode = JALR
+        else '0';
     process(i_clk)
     begin
         if rising_edge(i_clk) then
-            skip(0) <= skip_PC or branch_take or i_rst;
-            skip(1) <= skip(0) or branch_take;
-            skip(2 to 3) <= skip(1 to 2);
+            if i_rst = '1' then
+                skip(0 to 3) <= (others => '1');
+            else
+                skip(0) <= skip_PC or branch_take0;  -- Insert skip if branch instruction was taken
+                skip(1) <= skip(0) or branch_take0;  -- Insert skip if branch instruction was taken
+                skip(2) <= skip(1);
+                skip(3) <= skip(2);
+            end if;
         end if;
     end process;
 
@@ -168,9 +182,9 @@ begin
         port map (
             i_clk=>i_clk,
             i_rst=>i_rst,
-            i_radr1=>to_inst(IR(0)).rs1,
+            i_radr1=>inst(0).rs1,
             o_rdata1=>regfile_data1,
-            i_radr2 =>to_inst(IR(0)).rs2,
+            i_radr2 =>inst(0).rs2,
             o_rdata2=>regfile_data2,
             i_wadr=>reg_i_adr,
             i_wena=>reg_i_wen,
@@ -178,17 +192,24 @@ begin
             o_regs=>regs
         );
 
-    -- Branch adder
+    -- Branch address selection
     process(i_clk)
+        variable sum         : unsigned(XLEN-1 downto 0);
+        variable immediate   : signed(XLEN-1 downto 0);
     begin
         if rising_edge(i_clk) then
-            if inst(0).opcode = JAL then
-                branch_adr <= unsigned( signed(PC(1)) + to_imm_j(IR(0)) );
-            else
-                branch_adr <= unsigned( signed(PC(1)) + to_imm_b(IR(0)) );
-            end if;
+            case inst(0).opcode is
+                when JAL     => immediate := to_imm_j(IR(0));
+                when BRANCH  => immediate := to_imm_b(IR(0));
+                -- JALR branch address evaluated in ALU
+                when others  => immediate := (others => '-');
+            end case;
+            sum := unsigned( signed(PC(1)) + immediate );
+            branch_adr0(0) <= '0';
+            branch_adr0(XLEN-1 downto 1) <= sum(XLEN-1 downto 1);
         end if;
     end process;
+    branch_adr1 <= unsigned(alu_o(0));  -- JALR branch address evaluated in ALU 
 
 
     ------------------------------------------------------------------------------------------------
@@ -200,12 +221,15 @@ begin
         '1' when skip(2) = '0' and (
                 inst(2).opcode = OP     or 
                 inst(2).opcode = OP_IMM or
-                inst(2).opcode = LUI
+                inst(2).opcode = LUI    or
+                inst(2).opcode = JALR   or
+                inst(2).opcode = AUIPC
             ) and (
                 inst(1).opcode = OP     or
                 inst(1).opcode = OP_IMM or
                 inst(1).opcode = LOAD   or
                 inst(1).opcode = STORE  or
+                inst(1).opcode = JALR   or
                 inst(1).opcode = BRANCH
             ) and (
                 inst(1).rs1 = inst(2).rd
@@ -216,12 +240,15 @@ begin
                 inst(3).opcode = OP     or
                 inst(3).opcode = OP_IMM or
                 inst(3).opcode = LUI    or
+                inst(3).opcode = JALR   or
+                inst(3).opcode = AUIPC  or
                 inst(3).opcode = LOAD
             ) and (
                 inst(1).opcode = OP     or
                 inst(1).opcode = OP_IMM or
                 inst(1).opcode = LOAD   or
                 inst(1).opcode = STORE  or
+                inst(1).opcode = JALR   or
                 inst(1).opcode = BRANCH
             ) and (
                 inst(1).rs1 = inst(3).rd
@@ -231,7 +258,9 @@ begin
         '1' when skip(2) = '0' and (
                 inst(2).opcode = OP     or
                 inst(2).opcode = OP_IMM or
-                inst(2).opcode = LUI
+                inst(2).opcode = LUI    or
+                inst(2).opcode = JALR   or
+                inst(2).opcode = AUIPC
             ) and (
                 inst(1).opcode = OP     or
                 inst(1).opcode = BRANCH
@@ -244,6 +273,8 @@ begin
                 inst(3).opcode = OP     or
                 inst(3).opcode = OP_IMM or
                 inst(3).opcode = LUI    or
+                inst(3).opcode = JALR   or
+                inst(3).opcode = AUIPC  or
                 inst(3).opcode = LOAD
             ) and (
                 inst(1).opcode = OP     or
@@ -281,7 +312,8 @@ begin
         i_funct3=>inst(1).funct3,
         i_funct7=>inst(1).funct7,
         i_skip=>skip(1),
-        o_branch_take=>branch_take
+        o_branch_take0=>branch_take0,
+        o_branch_take1=>branch_take1
     );
 
     -- ALU
@@ -302,11 +334,14 @@ begin
         end if;
     end process;
 
-    alu_i_a <= rs1_data(0);
+    alu_i_a <= 
+        std_logic_vector(PC(2)) when inst(1).opcode = AUIPC else
+        rs1_data(0);
     alu_i_b <=
         std_logic_vector(to_imm_u(IR(1))) when inst(1).opcode = AUIPC       else
         std_logic_vector(to_imm_u(IR(1))) when inst(1).opcode = LUI         else
         std_logic_vector(to_imm_i(IR(1))) when inst(1).opcode = OP_IMM      else
+        std_logic_vector(to_imm_i(IR(1))) when inst(1).opcode = JALR        else
         rs2_data(0);
 
 
@@ -328,10 +363,12 @@ begin
 
     reg_i_adr <= inst(3).rd;
     reg_i_data <= 
-        i_data_mem_data when inst(3).opcode = LOAD      else
-        alu_o(1)        when inst(3).opcode = OP        else
-        alu_o(1)        when inst(3).opcode = OP_IMM    else
-        alu_o(1)        when inst(3).opcode = LUI       else
+        i_data_mem_data         when inst(3).opcode = LOAD      else
+        alu_o(1)                when inst(3).opcode = OP        else
+        alu_o(1)                when inst(3).opcode = OP_IMM    else
+        alu_o(1)                when inst(3).opcode = LUI       else
+        std_logic_vector(PC(3)) when inst(3).opcode = JALR      else
+        std_logic_vector(PC(3)) when inst(3).opcode = JAL       else
         (others => '-');
         
     reg_i_wen <= 
@@ -339,9 +376,12 @@ begin
                 inst(3).opcode = LOAD    or 
                 inst(3).opcode = OP      or
                 inst(3).opcode = OP_IMM  or
+                inst(3).opcode = JAL     or
+                inst(3).opcode = JALR    or
                 inst(3).opcode = LUI
             ) else 
         '0';
+
 
 
     ------------------------------------------------------------------------------------------------

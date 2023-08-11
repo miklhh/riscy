@@ -38,6 +38,7 @@ begin
         wait until rst = '0';
         -- Test finish successfully iff gp=1 and a0=0 during an ECALL
         wait until ecall = '1' and unsigned(ecall_regs(3)) = 1 and unsigned(ecall_regs(10)) = 0;
+        report "Test '" & test_name & "' completed successfully" severity note;
         test_runner_cleanup(runner);
     end process;
 
@@ -74,6 +75,7 @@ begin
     unit_test_fail_tester : process
     begin
         wait until ecall = '1';
+        wait until clk = '0';
         assert unsigned(ecall_regs(3)) = 1 and unsigned(ecall_regs(10)) = 0
             report "Unit test failure (" & test_name & "): #" & 
                 integer'image(to_integer(unsigned(ecall_regs(3)))/2)
