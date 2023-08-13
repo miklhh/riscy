@@ -58,7 +58,7 @@ architecture riscy_core_rtl of riscy_core is
     signal reg_i_wen            : std_logic;
     signal regs                 : regfile_vector_type;  -- Readport for all regfile registers
 
-    -- Register forwarding logic
+    -- Register forwarding logic (p1: higher priority, p2: lower priority)
     signal reg_fwd_a_p1         : std_logic;
     signal reg_fwd_a_p2         : std_logic;
     signal reg_fwd_b_p1         : std_logic;
