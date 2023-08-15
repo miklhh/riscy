@@ -137,6 +137,10 @@ begin
                 result <= add_out;
             when JALR =>
                 result <= add_out;
+            when LOAD =>
+                result <= add_out;
+            when STORE =>
+                result <= add_out;
             when OP | OP_IMM =>
                 case i_funct3 is
                     when "000" =>  -- ADD/SUB

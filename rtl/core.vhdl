@@ -76,9 +76,22 @@ architecture riscy_core_rtl of riscy_core is
     signal branch_adr0          : unsigned(XLEN-1 downto 0);
     signal branch_adr1          : unsigned(XLEN-1 downto 0);
 
-    -- CPU skip signal
+    -- CPU skip instruction signal
     signal skip                 : std_logic_vector(0 to 3);
     signal skip_PC              : std_logic;
+
+    -- CPU stall signals
+    signal stall_pc             : std_logic;
+    signal stall_pc_del         : std_logic;
+
+    -- Load store unit signals
+    signal load_store_o_valid   : std_logic;
+    signal load_store_o_data    : std_logic_vector(XLEN-1 downto 0);
+    signal load_store_i_valid   : std_logic;
+    signal load_store_i_data    : std_logic_vector(XLEN-1 downto 0);
+    signal load_store_i_addr    : std_logic_vector(XLEN-1 downto 0);
+    signal load_store_o_wait    : std_logic;
+    signal load_store_i_wait    : std_logic;
 
 begin
 
@@ -94,7 +107,7 @@ begin
         if skip(3) = '0' then
             case inst(3).opcode is
                 when UNKNOWN => o_core_fault <= UNIMPLEMENTED_INSTRUCTION;
-                when LOAD => o_core_fault <= UNIMPLEMENTED_INSTRUCTION;
+                --when LOAD => o_core_fault <= UNIMPLEMENTED_INSTRUCTION;
                 when STORE => o_core_fault <= UNIMPLEMENTED_INSTRUCTION;
                 when others => o_core_fault <= NONE;
             end case;
@@ -126,6 +139,7 @@ begin
     PC_mux <= 
         branch_adr1 when branch_take1 = '1' else
         branch_adr0 when branch_take0 = '1' else
+        PC(0)+0     when stall_pc = '1'     else
         PC(0)+4;
 
     -- Instruction register pipeline (the instruction memory acts as first IR register)
@@ -137,6 +151,11 @@ begin
                 IR(1 to 3) <= (NOP, NOP, NOP);
             else
                 IR(1 to 3) <= IR(0 to 2);
+                
+                -- Insert NOPs to the instruction pipeline on PC stall
+                if stall_pc_del = '1' then
+                    IR(1) <= NOP;
+                end if;
             end if;
         end if;
     end process;
@@ -174,6 +193,15 @@ begin
                 skip(2) <= skip(1);
                 skip(3) <= skip(2);
             end if;
+        end if;
+    end process;
+
+    -- Stall PC logic (on LOAD/STORE opcodes)
+    stall_pc <= '1' when inst(0).opcode = LOAD and stall_pc_del = '0' else '0';
+    process(i_clk)
+    begin   
+        if rising_edge(i_clk) then
+            stall_pc_del <= stall_pc;
         end if;
     end process;
 
@@ -233,6 +261,8 @@ begin
                 inst(1).opcode = BRANCH
             ) and (
                 inst(1).rs1 = inst(2).rd
+            ) and (
+                inst(1).rs1 /= 0
             )
         else '0';
     reg_fwd_a_p2 <=
@@ -252,6 +282,8 @@ begin
                 inst(1).opcode = BRANCH
             ) and (
                 inst(1).rs1 = inst(3).rd
+            ) and (
+                inst(1).rs1 /= 0
             )
         else '0';
     reg_fwd_b_p1 <=
@@ -266,6 +298,8 @@ begin
                 inst(1).opcode = BRANCH
             ) and (
                 inst(1).rs2 = inst(2).rd
+            ) and (
+                inst(1).rs2 /= 0
             )
         else '0';
     reg_fwd_b_p2 <=
@@ -281,6 +315,8 @@ begin
                 inst(1).opcode = BRANCH
             ) and (
                 inst(1).rs2 = inst(3).rd
+            ) and (
+                inst(1).rs2 /= 0
             )
         else '0';
 
@@ -292,12 +328,14 @@ begin
         end if;
     end process;
     rs1_data(0) <=
-        alu_o(0) when reg_fwd_a_p1 = '1' else
-        alu_o(1) when reg_fwd_a_p2 = '1' else
+        alu_o(0)            when reg_fwd_a_p1 = '1'                             else
+        alu_o(1)            when reg_fwd_a_p2 = '1' and inst(3).opcode /= LOAD  else
+        load_store_o_data   when reg_fwd_a_p2 = '1' and inst(3).opcode  = LOAD  else
         regfile_data1;
     rs2_data(0) <=
-        alu_o(0) when reg_fwd_b_p1 = '1' else
-        alu_o(1) when reg_fwd_b_p2 = '1' else
+        alu_o(0)            when reg_fwd_b_p1 = '1' else
+        alu_o(1)            when reg_fwd_b_p2 = '1' and inst(3).opcode /= LOAD  else
+        load_store_o_data   when reg_fwd_b_p2 = '1' and inst(3).opcode  = LOAD  else
         regfile_data2;
 
 
@@ -342,6 +380,8 @@ begin
         std_logic_vector(to_imm_u(IR(1))) when inst(1).opcode = LUI         else
         std_logic_vector(to_imm_i(IR(1))) when inst(1).opcode = OP_IMM      else
         std_logic_vector(to_imm_i(IR(1))) when inst(1).opcode = JALR        else
+        std_logic_vector(to_imm_i(IR(1))) when inst(1).opcode = LOAD        else
+        std_logic_vector(to_imm_s(IR(1))) when inst(1).opcode = STORE       else
         rs2_data(0);
 
 
@@ -349,12 +389,29 @@ begin
     ---                                      Data Memory                                         ---
     ------------------------------------------------------------------------------------------------
 
-    o_data_mem_ena <= 
-        '1' when skip(2) = '0' and (inst(2).opcode = LOAD or inst(2).opcode = STORE) else
-        '0';
-    o_data_mem_we  <= '1' when skip(2) = '0' and inst(2).opcode = STORE else '0';
-    o_data_mem_addr <= alu_o(0);
-    o_data_mem_data <= rs2_data(1);
+    -- Load store unit talking to the memory
+    riscy_load_store_inst: entity work.riscy_load_store
+    port map (
+        i_clk=>i_clk,
+        i_rst=>i_rst,
+        i_wait=>load_store_i_wait,
+        o_wait=>load_store_o_wait,
+        i_skip=>skip(2),
+        i_inst=>inst(2),
+        i_addr=>load_store_i_addr,
+        i_data=>load_store_i_data,
+        i_mem_ready=>'1',
+        i_mem_data=>i_data_mem_data,
+        o_mem_ena=>o_data_mem_ena,
+        o_mem_data=>o_data_mem_data,
+        o_mem_addr=>o_data_mem_addr,
+        o_mem_we=>o_data_mem_we,
+        o_data=>load_store_o_data,
+        o_data_valid=>load_store_o_valid
+    );
+    load_store_i_wait <= '0';
+    load_store_i_data <= rs2_data(1);
+    load_store_i_addr <= alu_o(0);
     
 
     ------------------------------------------------------------------------------------------------
@@ -363,7 +420,7 @@ begin
 
     reg_i_adr <= inst(3).rd;
     reg_i_data <= 
-        i_data_mem_data         when inst(3).opcode = LOAD      else
+        load_store_o_data       when inst(3).opcode = LOAD      else
         alu_o(1)                when inst(3).opcode = OP        else
         alu_o(1)                when inst(3).opcode = OP_IMM    else
         alu_o(1)                when inst(3).opcode = LUI       else

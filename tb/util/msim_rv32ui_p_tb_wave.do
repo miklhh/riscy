@@ -10,6 +10,7 @@ add wave -noupdate -divider {Core #0:}
 add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/hartid
 add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/PC(0)
 add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/skip_PC
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/stall_pc
 add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/IR
 add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/rs1_data
 add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/rs2_data
@@ -18,8 +19,9 @@ add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/i_instr_mem_data
 add wave -noupdate -divider {Core #0 (debug):}
 add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/PC(0)
 add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/skip_PC
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/stall_pc
 add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/inst
-add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_regfile/regs
+add wave -noupdate -childformat {{/rv32ui_p_tb/DUT/riscy_core/riscy_regfile/regs(3) -radix unsigned}} -subitemconfig {/rv32ui_p_tb/DUT/riscy_core/riscy_regfile/regs(3) {-height 17 -radix unsigned}} /rv32ui_p_tb/DUT/riscy_core/riscy_regfile/regs
 add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/rs1_data
 add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/rs2_data
 add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/alu_o
@@ -27,6 +29,28 @@ add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/branch_take0
 add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/branch_adr0
 add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/branch_take1
 add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/branch_adr1
+add wave -noupdate -divider {Load-store unit:}
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_load_store_inst/i_wait
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_load_store_inst/o_wait
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_load_store_inst/i_inst
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_load_store_inst/i_addr
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_load_store_inst/i_data
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_load_store_inst/i_mem_ready
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_load_store_inst/i_mem_data
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_load_store_inst/o_mem_data
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_load_store_inst/o_mem_addr
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_load_store_inst/o_mem_ena
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_load_store_inst/o_mem_we
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_load_store_inst/o_data
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_load_store_inst/o_data_valid
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_load_store_inst/state
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_load_store_inst/next_transaction
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_load_store_inst/do_load
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_load_store_inst/do_store
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_load_store_inst/is_aligned
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_load_store_inst/is_quick
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_load_store_inst/q_o_mem_addr
+add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_load_store_inst/q_o_mem_data
 add wave -noupdate -divider {Core #0 (ALU)}
 add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/skip
 add wave -noupdate /rv32ui_p_tb/DUT/riscy_core/riscy_alu/i_data1
@@ -68,4 +92,4 @@ configure wave -griddelta 40
 configure wave -timeline 0
 configure wave -timelineunits ns
 update
-WaveRestoreZoom {0 ps} {105 us}
+WaveRestoreZoom {0 ps} {3480750 ps}
