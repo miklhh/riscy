@@ -38,7 +38,8 @@ entity riscy_load_store is
 
         -- Output to write back stage
         o_data      : out std_logic_vector(XLEN-1 downto 0);  -- Output data
-        o_data_valid: out std_logic  -- Output data is valid
+        o_data_valid: out std_logic;  -- Output data is valid
+        o_fault     : out fault_type
     );
 end entity riscy_load_store;
 
@@ -76,34 +77,13 @@ begin
     do_load  <= '1' when i_skip = '0' and i_wait = '0' and i_inst.opcode = LOAD  else '0';
     do_store <= '1' when i_skip = '0' and i_wait = '0' and i_inst.opcode = STORE else '0';
 
-    -- Memory transaction aligned?
+    -- Memory transaction aligned, i.e., it requires only a single memory access
     is_aligned <=
         '1' when i_inst.funct3 = "000"                               else  -- L(/S)B
         '1' when i_inst.funct3 = "001" and i_addr(0) = '0'           else  -- L(/S)H
         '1' when i_inst.funct3 = "010" and i_addr(1 downto 0) = "00" else  -- L(/S)W
         '1' when i_inst.funct3 = "100"                               else  -- LBU
         '1' when i_inst.funct3 = "101" and i_addr(0) = '0'           else  -- LHU
-        '0';
-
-    -- Memory external interface
-    o_mem_addr <=
-        q_o_mem_addr when state = WAITING and is_quick = '1' else
-        (others => '-');
-
-    o_mem_data <=
-        q_o_mem_data when state = WAITING and is_quick = '1' else
-        (others => '-');
-
-    o_data_valid <=
-        '1' when state = WAITING and is_quick = '1' and i_mem_ready = '1' else
-        '0';
-    o_mem_we <=
-        '1' when state = WAITING and is_quick = '1' and i_mem_ready = '1' and do_store = '1' else
-        '0';
-
-    o_mem_ena <=
-        '1' when state = WAITING and is_quick = '1' and i_mem_ready = '1' and 
-                 (do_store = '1' or do_load = '1') else
         '0';
 
     -- Non whole word output variants
@@ -121,16 +101,6 @@ begin
         (others => '-');
     q_quarter(31 downto 8) <= (others => q_quarter(7)) when sign_extend = '1' else (others => '0');
 
-
-    -- Load store external interface
-    o_data <=
-        q_quarter   when inst_del.funct3(1 downto 0) = "00" else
-        q_half      when inst_del.funct3(1 downto 0) = "01" else
-        i_mem_data  when inst_del.funct3(1 downto 0) = "10" else
-        (others => '-');
-    o_data_valid <= '1';
-    o_wait <= '0';
-
     -- Delayed instruction
     process(i_clk)
     begin
@@ -140,7 +110,7 @@ begin
         end if;
     end process;
 
-    -- Next transaction logic
+    -- Combinatorial next transaction logic
     process(all)
     begin
         if do_load = '0' and do_store = '0' then
@@ -193,19 +163,61 @@ begin
         if rising_edge(i_clk) then
             if i_rst = '1' then
                 state <= WAITING;
+                o_fault <= NONE;
             else
                 case state is
                     when WAITING =>
                         state <= next_transaction;
+                        o_fault <= NONE;
                     when LOAD_UNALIGNED =>
                         report "LOAD_UNALIGNED not implemented yet" severity failure;
+                        o_fault <= MEMORY_ALIGNMENT_ERROR;
                     when STORE_ALIGNED =>
                         report "STORE_ALIGNED not implemented yet" severity failure;
+                        o_fault <= MEMORY_ALIGNMENT_ERROR;
                     when STORE_UNALIGNED =>
                         report "STORE_UNALIGNED not implemented yet" severity failure;
+                        o_fault <= MEMORY_ALIGNMENT_ERROR;
                 end case;
             end if;
         end if;
     end process;
+
+
+    ------------------------------------------------------------------------------------------------
+    ---                               Data memory external interface                             ---
+    ------------------------------------------------------------------------------------------------
+    o_mem_addr <=
+        q_o_mem_addr when state = WAITING and is_quick = '1' else
+        (others => '-');
+
+    o_mem_data <=
+        q_o_mem_data when state = WAITING and is_quick = '1' else
+        (others => '-');
+
+    o_data_valid <=
+        '1' when state = WAITING and is_quick = '1' and i_mem_ready = '1' else
+        '0';
+
+    o_mem_we <=
+        '1' when state = WAITING and is_quick = '1' and i_mem_ready = '1' and do_store = '1' else
+        '0';
+
+    o_mem_ena <=
+        '1' when state = WAITING and is_quick = '1' and i_mem_ready = '1' and 
+                 (do_store = '1' or do_load = '1') else
+        '0';
+
+
+    ------------------------------------------------------------------------------------------------
+    ---                            Load-store unit external interface                            ---
+    ------------------------------------------------------------------------------------------------
+    o_data <=
+        q_quarter   when inst_del.funct3(1 downto 0) = "00" else  -- LB
+        q_half      when inst_del.funct3(1 downto 0) = "01" else  -- LH
+        i_mem_data  when inst_del.funct3(1 downto 0) = "10" else  -- LW
+        (others => '-');
+    o_data_valid <= '1';
+    o_wait <= '0';
 
 end architecture riscy_load_store_rtl;

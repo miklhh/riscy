@@ -61,8 +61,8 @@ begin
         -- First test if 
         if core_fault /= NONE then
             case core_fault is
-                when UNIMPLEMENTED_INSTRUCTION =>
-                    report "CPU core fault: UNIMPLEMENTED_INSTRUCTION" severity failure;
+                when UNIMPLEMENTED_INSTRUCTION_ERROR =>
+                    report "CPU core fault: UNIMPLEMENTED_INSTRUCTION_ERROR" severity failure;
                 when others =>
                     report "CPU core fault: UNKNOWN" severity failure;
             end case;

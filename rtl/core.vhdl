@@ -92,6 +92,7 @@ architecture riscy_core_rtl of riscy_core is
     signal load_store_i_addr    : std_logic_vector(XLEN-1 downto 0);
     signal load_store_o_wait    : std_logic;
     signal load_store_i_wait    : std_logic;
+    signal load_store_fault     : fault_type;
 
 begin
 
@@ -100,18 +101,24 @@ begin
     ------------------------------------------------------------------------------------------------
 
     -- CPU faults
-    process(inst(3), skip(3))
+    process(all)
     begin
+        -- Default: no fault
         o_core_fault <= NONE;
+
         -- Unimplemented instructions
         if skip(3) = '0' then
             case inst(3).opcode is
-                when UNKNOWN => o_core_fault <= UNIMPLEMENTED_INSTRUCTION;
-                --when LOAD => o_core_fault <= UNIMPLEMENTED_INSTRUCTION;
-                when STORE => o_core_fault <= UNIMPLEMENTED_INSTRUCTION;
+                when UNKNOWN => o_core_fault <= UNIMPLEMENTED_INSTRUCTION_ERROR;
                 when others => o_core_fault <= NONE;
             end case;
         end if;
+
+        -- Memory alignment fault
+        if load_store_fault /= NONE then
+            o_core_fault <= load_store_fault;
+        end if;
+
     end process;
 
     -- Environment calls
@@ -173,9 +180,18 @@ begin
     ---                                    Instruction decode                                    ---
     ------------------------------------------------------------------------------------------------
 
-    -- Skip instruction logic
+    -- Stall PC logic (on LOAD instructions)
+    stall_pc <= '1' when inst(0).opcode = LOAD and stall_pc_del = '0' else '0';
+    process(i_clk)
+    begin   
+        if rising_edge(i_clk) then
+            stall_pc_del <= stall_pc;
+        end if;
+    end process;
+
+    -- Skip instruction logic (only skip when not stalling)
     skip_PC <= 
-        '1' when 
+        not(stall_pc_del) when 
             inst(0).opcode = JAL    or 
             inst(1).opcode = JAL    or
             inst(0).opcode = JALR   or
@@ -193,15 +209,6 @@ begin
                 skip(2) <= skip(1);
                 skip(3) <= skip(2);
             end if;
-        end if;
-    end process;
-
-    -- Stall PC logic (on LOAD/STORE opcodes)
-    stall_pc <= '1' when inst(0).opcode = LOAD and stall_pc_del = '0' else '0';
-    process(i_clk)
-    begin   
-        if rising_edge(i_clk) then
-            stall_pc_del <= stall_pc;
         end if;
     end process;
 
@@ -295,6 +302,7 @@ begin
                 inst(2).opcode = AUIPC
             ) and (
                 inst(1).opcode = OP     or
+                inst(1).opcode = STORE  or
                 inst(1).opcode = BRANCH
             ) and (
                 inst(1).rs2 = inst(2).rd
@@ -312,6 +320,7 @@ begin
                 inst(3).opcode = LOAD
             ) and (
                 inst(1).opcode = OP     or
+                inst(1).opcode = STORE  or
                 inst(1).opcode = BRANCH
             ) and (
                 inst(1).rs2 = inst(3).rd
@@ -407,7 +416,8 @@ begin
         o_mem_addr=>o_data_mem_addr,
         o_mem_we=>o_data_mem_we,
         o_data=>load_store_o_data,
-        o_data_valid=>load_store_o_valid
+        o_data_valid=>load_store_o_valid,
+        o_fault=>load_store_fault
     );
     load_store_i_wait <= '0';
     load_store_i_data <= rs2_data(1);
@@ -424,6 +434,7 @@ begin
         alu_o(1)                when inst(3).opcode = OP        else
         alu_o(1)                when inst(3).opcode = OP_IMM    else
         alu_o(1)                when inst(3).opcode = LUI       else
+        alu_o(1)                when inst(3).opcode = AUIPC     else
         std_logic_vector(PC(3)) when inst(3).opcode = JALR      else
         std_logic_vector(PC(3)) when inst(3).opcode = JAL       else
         (others => '-');
@@ -435,7 +446,8 @@ begin
                 inst(3).opcode = OP_IMM  or
                 inst(3).opcode = JAL     or
                 inst(3).opcode = JALR    or
-                inst(3).opcode = LUI
+                inst(3).opcode = LUI     or
+                inst(3).opcode = AUIPC
             ) else 
         '0';
 

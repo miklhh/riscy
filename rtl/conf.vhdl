@@ -76,7 +76,8 @@ package riscy_conf is
     ------------------------------------------------------------------------------------------------
     type fault_type is (
         NONE,
-        UNIMPLEMENTED_INSTRUCTION
+        UNIMPLEMENTED_INSTRUCTION_ERROR,
+        MEMORY_ALIGNMENT_ERROR
     );
 
 end package riscy_conf;
