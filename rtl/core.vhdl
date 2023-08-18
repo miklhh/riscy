@@ -20,7 +20,6 @@ entity riscy_core is
         o_instr_mem_ena     : out std_logic;
         i_instr_mem_ready   : in std_logic;
         o_instr_mem_addr    : out std_logic_vector(XLEN-1 downto 0);
-        i_instr_mem_valid   : in std_logic;
         i_instr_mem_data    : in std_logic_vector(XLEN-1 downto 0);
 
         -- Data memory port (synchronous to clk)
@@ -30,7 +29,6 @@ entity riscy_core is
         o_data_mem_addr     : out std_logic_vector(XLEN-1 downto 0);
         o_data_mem_data     : out std_logic_vector(XLEN-1 downto 0);
         i_data_mem_data     : in std_logic_vector(XLEN-1 downto 0);
-        i_data_mem_valid    : in std_logic;
 
         -- CPU core fault and environment 
         o_core_fault        : out fault_type;
@@ -94,12 +92,10 @@ architecture riscy_core_rtl of riscy_core is
     signal stall_del            : std_logic_vector(0 to 4);
 
     -- Load store unit signals
-    signal load_store_o_valid   : std_logic;
     signal load_store_o_data    : std_logic_vector(XLEN-1 downto 0);
-    signal load_store_i_valid   : std_logic;
     signal load_store_i_data    : std_logic_vector(XLEN-1 downto 0);
     signal load_store_i_addr    : std_logic_vector(XLEN-1 downto 0);
-    signal load_store_o_wait    : std_logic;
+    signal load_store_o_valid   : std_logic;
     signal load_store_fault     : fault_type;
 
 begin
@@ -144,12 +140,9 @@ begin
             if i_rst = '1' then
                 PC <= (others => (others => '0'));
             else
-                if stall(0) = '1' then
-                    PC <= PC;
-                else
-                    PC(0) <= PC_mux;
-                    PC(1 to 4) <= PC(0 to 3);
-                end if;
+                -- Stalling of PC is handeled in PC mux
+                PC(0) <= PC_mux;
+                PC(1 to 4) <= PC(0 to 3);
             end if;
         end if;
     end process;
@@ -158,6 +151,7 @@ begin
     PC_mux <= 
         branch_adr1 when branch_take1 = '1' else
         branch_adr0 when branch_take0 = '1' else
+        PC(0)       when stall(0) = '1'     else
         PC(0)+4;
 
     -- Instruction register pipeline (the instruction memory acts as first IR register)
@@ -192,29 +186,35 @@ begin
                 end loop;
 
                 --
-                --   * If the instruction decoding stage, directly after the instruction memory,
-                --     has to stall, then temporarly saving of the instruction in the instruction
-                --     memory output has to be done in order not to lose that instruction. Once
-                --     this stage can continue again, the saved instruction needs to be put back to 
-                --     the instruction register pipeline again.
+                -- * If the instruction decoding stage, directly after the instruction memory,
+                --   has to stall, then temporarly saving of the instruction in the instruction
+                --   memory output has to be done in order not to lose that instruction. Once
+                --   this stage can continue again, the saved instruction needs to be put back to 
+                --   the instruction register pipeline again.
                 --
-                if stall(2) = '0' then
-                    if stall(1) = '1' then
-                        -- Only previous staged stalling
-                        IR(1) <= NOP;
-                    elsif stall_del(1) = '1' then
-                        -- Previous staged stalled one cycle ago, use the saved instruction
+                if stall(0) = '0' then
+                    if stall_del(1) = '1' then
+                        -- Recover saved instruction
                         IR(1) <= IR_saved;
                     else
-                        -- No stalling
-                        if i_instr_mem_valid = '1' then
+                        IR(1) <= i_instr_mem_data;
+                    end if;
+                else  -- stall(0) = '1'
+                    if stall(1) = '0' then
+                        if stall_del(0) = '0' then
+                            -- Still a valid instruction in instruction mem output
                             IR(1) <= i_instr_mem_data;
                         else
+                            -- PC is stalling, no valid data left
                             IR(1) <= NOP;
                         end if;
+                    else  -- stall(1) = '1'
+                        if stall(2) = '0' then
+                            IR(1) <= NOP;
+                        else
+                            IR(1) <= IR(1);
+                        end if;
                     end if;
-                else  -- stall(2) = '1'
-                    IR(1) <= IR(1);
                 end if;
                 
             end if;
@@ -231,11 +231,7 @@ begin
         if stall(1) = '0' and stall_del(1) = '1' then
             inst(0) <= to_inst(IR_saved);
         else
-            if i_instr_mem_valid = '1' then
-                inst(0) <= to_inst(i_instr_mem_data);
-            else
-                inst(0) <= to_inst(NOP);
-            end if;
+            inst(0) <= to_inst(i_instr_mem_data);
         end if;
     end process;
 
@@ -243,24 +239,11 @@ begin
     process(i_clk)
     begin
         if rising_edge(i_clk) then
-            if stall(1) = '1' then
-                if stall_del(1) = '0' and i_instr_mem_valid = '1' then
-                    -- About to stall, save the instruction if valid
-                    IR_saved <= i_instr_mem_data;
-                else
-                    -- Stalling (or invalid input instruction), just keep the saved one
-                    IR_saved <= IR_saved;
-                end if;
-            else -- stall(1) = '0' then
-                if i_instr_mem_valid = '1' then
-                    -- Not stalling and valid input, save away the instruction
-                    IR_saved <= i_instr_mem_data;
-                else
-                    -- Not valid instruction from instruction memory, keep the old one
-                    IR_saved <= IR_saved;
-                end if;
+            if stall(1) = '1' and stall_del(1) = '0' then
+                IR_saved <= i_instr_mem_data;
+            else
+                IR_saved <= IR_saved;
             end if;
-
         end if;
     end process;
     inst_saved <= to_inst(IR_saved);
@@ -285,10 +268,10 @@ begin
             if i_rst = '1' then
                 skip(0 to 3) <= (others => '1');
             else
-                skip(0) <= skip_PC or branch_take0;  -- Insert skip if branch instruction was taken
-                skip(1) <= skip(0) or branch_take0;  -- Insert skip if branch instruction was taken
-                skip(2) <= skip(1);
-                skip(3) <= skip(2);
+                skip(0) <= (stall(1) and skip(0)) or (not(stall(1)) and skip_PC) or branch_take0;
+                skip(1) <= (stall(2) and skip(1)) or (not(stall(2)) and skip(0)) or branch_take0;
+                skip(2) <= (stall(3) and skip(2)) or (not(stall(3)) and skip(1));
+                skip(3) <= (stall(4) and skip(3)) or (not(stall(4)) and skip(2));
             end if;
         end if;
     end process;
@@ -322,7 +305,11 @@ begin
             end case;
             sum := unsigned( signed(PC(1)) + immediate );
             branch_adr0(0) <= '0';
-            branch_adr0(XLEN-1 downto 1) <= sum(XLEN-1 downto 1);
+            if stall(2) = '1' then
+                branch_adr0(XLEN-1 downto 1) <= branch_adr0(XLEN-1 downto 1);
+            else
+                branch_adr0(XLEN-1 downto 1) <= sum(XLEN-1 downto 1);
+            end if;
         end if;
     end process;
     branch_adr1 <= unsigned(alu_o(0));  -- JALR branch address evaluated in ALU 
@@ -413,8 +400,20 @@ begin
     process(i_clk)
     begin
         if rising_edge(i_clk) then
-            rs1_data(1 to 2) <= rs1_data(0 to 1);
-            rs2_data(1 to 2) <= rs2_data(0 to 1);
+            if stall(3) = '1' then
+                rs1_data(1) <= rs1_data(1);
+                rs2_data(1) <= rs2_data(1);
+            else
+                rs1_data(1) <= rs1_data(0);
+                rs2_data(1) <= rs2_data(0);
+            end if;
+            if stall(4) = '1' then
+                rs1_data(2) <= rs1_data(2);
+                rs2_data(2) <= rs2_data(2);
+            else
+                rs1_data(2) <= rs1_data(1);
+                rs2_data(2) <= rs2_data(1);
+            end if;
         end if;
     end process;
     rs1_data(0) <=
@@ -458,7 +457,11 @@ begin
     );
     process(i_clk) begin
         if rising_edge(i_clk) then
-            alu_o(1) <= alu_o(0);
+            if stall(4) = '1' then
+                alu_o(1) <= alu_o(1);
+            else
+                alu_o(1) <= alu_o(0);
+            end if;
         end if;
     end process;
 
@@ -517,15 +520,13 @@ begin
         -- System
         i_clk=>i_clk,
         i_rst=>i_rst,
-        o_wait=>load_store_o_wait,
         i_skip=>skip(2),
         i_inst=>inst(2),
         i_addr=>load_store_i_addr,
         i_data=>load_store_i_data,
 
         -- Data memory interface
-        i_mem_valid=>'1',
-        i_mem_ready=>'1',
+        i_mem_ready=>i_data_mem_ready,
         i_mem_data=>i_data_mem_data,
         o_mem_ena=>o_data_mem_ena,
         o_mem_data=>o_data_mem_data,
@@ -577,16 +578,14 @@ begin
     -- Stall logic including back propagation
     -- * NOTE: stall(n) corresponds to IR(n-1)
     stall(0) <= stall(1) or not(i_instr_mem_ready);  -- Stall(0): PC stalling
-    stall(1) <= stall(2) or not(i_instr_mem_valid);  -- Stall(1): Decoding stage
+    stall(1) <= stall(2);                            -- Stall(1): Decoding stage
     stall(2) <= stall(3) or ex_stall;                -- Stall(2): Execution (ALU) stage
     stall(3) <=                                      -- Stall(3): Memory access stage
         '1' when stall(4) = '1'                                     else
         '1' when i_data_mem_ready = '0' and inst(2).opcode = LOAD   else
         '1' when i_data_mem_ready = '0' and inst(2).opcode = STORE  else
         '0';
-    stall(4) <=                                      -- Stall(4): Write-back stage
-        '1' when i_data_mem_valid = '0' and inst(3).opcode = LOAD else  
-        '0';
+    stall(4) <= '0';                                 -- Stall(4): Write-back stage
     process(i_clk)
     begin
         if rising_edge(i_clk) then

@@ -18,9 +18,6 @@ entity riscy_load_store is
     port(
         i_clk, i_rst : in std_logic;
 
-        -- Back pressure handling
-        o_wait      : out std_logic;  -- To ascendant (previous) pipeline stage
-
         -- Input from execution stage
         i_skip      : in std_logic;  -- Skip this instruction
         i_inst      : in inst_type;  -- Instruction to executre
@@ -28,7 +25,6 @@ entity riscy_load_store is
         i_data      : in std_logic_vector(XLEN-1 downto 0);  -- Input data
 
         -- Data memory interface
-        i_mem_valid : in std_logic;
         i_mem_ready : in std_logic;
         i_mem_data  : in std_logic_vector(XLEN-1 downto 0);
         o_mem_data  : out std_logic_vector(XLEN-1 downto 0);
@@ -194,14 +190,12 @@ begin
     process(all)
     begin
         if rising_edge(i_clk) then
-            if state = WAITING and is_quick = '1' and i_mem_valid = '1' then
+            if state = WAITING and is_quick = '1' and i_mem_ready = '1' then
                 o_data_valid <= '1';
             else
                 o_data_valid <= '0';
             end if;
         end if;
     end process;
-
-    o_wait <= '0';
 
 end architecture riscy_load_store_rtl;
