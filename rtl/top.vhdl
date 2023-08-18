@@ -34,12 +34,16 @@ end entity riscy_top;
 architecture riscy_top_rtl of riscy_top is
     -- Instruction memory signals
     signal inst_mem_ena     : std_logic;
+    signal inst_mem_ready   : std_logic;
+    signal inst_mem_valid   : std_logic;
     signal inst_mem_addr    : std_logic_vector(XLEN-1 downto 0);
     signal inst_mem_data    : std_logic_vector(XLEN-1 downto 0);
 
     -- Data memory signals
     signal data_mem_ena     : std_logic;
     signal data_mem_we      : std_logic;
+    signal data_mem_ready   : std_logic;
+    signal data_mem_valid   : std_logic;
     signal data_mem_addr    : std_logic_vector(XLEN-1 downto 0);
     signal data_mem_data_i  : std_logic_vector(XLEN-1 downto 0);
     signal data_mem_data_o  : std_logic_vector(XLEN-1 downto 0);
@@ -58,15 +62,19 @@ begin
 
         -- Instruction memory
         o_instr_mem_ena=>inst_mem_ena,
+        i_instr_mem_ready=>inst_mem_ready,
         o_instr_mem_addr=>inst_mem_addr,
+        i_instr_mem_valid=>inst_mem_valid,
         i_instr_mem_data=>inst_mem_data,
 
         -- Data memory
         o_data_mem_ena=>data_mem_ena,
         o_data_mem_we=>data_mem_we,
+        i_data_mem_ready=>data_mem_ready,
         o_data_mem_addr=>data_mem_addr,
         o_data_mem_data=>data_mem_data_i,
         i_data_mem_data=>data_mem_data_o,
+        i_data_mem_valid=>data_mem_valid,
 
         -- CPU core fault and environment 
         o_core_fault=>o_core_fault,
@@ -101,6 +109,8 @@ begin
         data_in=>(others => '0'),
         data_out=>inst_mem_data
     );
+    inst_mem_valid <= '1';
+    inst_mem_ready <= '1';
 
     --
     -- Test bench data memory
@@ -119,4 +129,7 @@ begin
         data_in=>data_mem_data_i,
         data_out=>data_mem_data_o
     );
+    data_mem_valid <= '1';
+    data_mem_ready <= '1';
+
 end architecture riscy_top_rtl;

@@ -18,15 +18,19 @@ entity riscy_core is
         
         -- Instruction memory port (synchronous to clk)
         o_instr_mem_ena     : out std_logic;
+        i_instr_mem_ready   : in std_logic;
         o_instr_mem_addr    : out std_logic_vector(XLEN-1 downto 0);
+        i_instr_mem_valid   : in std_logic;
         i_instr_mem_data    : in std_logic_vector(XLEN-1 downto 0);
 
         -- Data memory port (synchronous to clk)
         o_data_mem_ena      : out std_logic;
         o_data_mem_we       : out std_logic;
+        i_data_mem_ready    : in std_logic;
         o_data_mem_addr     : out std_logic_vector(XLEN-1 downto 0);
         o_data_mem_data     : out std_logic_vector(XLEN-1 downto 0);
         i_data_mem_data     : in std_logic_vector(XLEN-1 downto 0);
+        i_data_mem_valid    : in std_logic;
 
         -- CPU core fault and environment 
         o_core_fault        : out fault_type;
@@ -48,7 +52,7 @@ architecture riscy_core_rtl of riscy_core is
     signal IR                   : IR_pipeline_type;
     signal inst                 : inst_pipeline_type;
 
-    -- Data to/from register file
+    -- Register file signals
     type reg_pipeline_type is array(0 to 2) of std_logic_vector(XLEN-1 downto 0);
     signal regfile_data1        : std_logic_vector(XLEN-1 downto 0);
     signal regfile_data2        : std_logic_vector(XLEN-1 downto 0);
@@ -81,6 +85,7 @@ architecture riscy_core_rtl of riscy_core is
     signal skip_PC              : std_logic;
 
     -- CPU stall signals
+    signal stall                : std_logic_vector(0 to 4);
     signal stall_pc             : std_logic;
     signal stall_pc_del         : std_logic;
 
@@ -91,7 +96,6 @@ architecture riscy_core_rtl of riscy_core is
     signal load_store_i_data    : std_logic_vector(XLEN-1 downto 0);
     signal load_store_i_addr    : std_logic_vector(XLEN-1 downto 0);
     signal load_store_o_wait    : std_logic;
-    signal load_store_i_wait    : std_logic;
     signal load_store_fault     : fault_type;
 
 begin
@@ -401,25 +405,31 @@ begin
     -- Load store unit talking to the memory
     riscy_load_store_inst: entity work.riscy_load_store
     port map (
+        -- System
         i_clk=>i_clk,
         i_rst=>i_rst,
-        i_wait=>load_store_i_wait,
         o_wait=>load_store_o_wait,
         i_skip=>skip(2),
         i_inst=>inst(2),
         i_addr=>load_store_i_addr,
         i_data=>load_store_i_data,
+
+        -- Data memory interface
+        i_mem_valid=>'1',
         i_mem_ready=>'1',
         i_mem_data=>i_data_mem_data,
         o_mem_ena=>o_data_mem_ena,
         o_mem_data=>o_data_mem_data,
         o_mem_addr=>o_data_mem_addr,
         o_mem_we=>o_data_mem_we,
+
+        -- Load store output
         o_data=>load_store_o_data,
         o_data_valid=>load_store_o_valid,
+
+        -- Fault
         o_fault=>load_store_fault
     );
-    load_store_i_wait <= '0';
     load_store_i_data <= rs2_data(1);
     load_store_i_addr <= alu_o(0);
     
@@ -441,7 +451,7 @@ begin
         
     reg_i_wen <= 
         '1' when skip(3) = '0' and (
-                inst(3).opcode = LOAD    or 
+               (inst(3).opcode = LOAD and load_store_o_valid = '1') or 
                 inst(3).opcode = OP      or
                 inst(3).opcode = OP_IMM  or
                 inst(3).opcode = JAL     or
@@ -452,9 +462,15 @@ begin
         '0';
 
 
-
     ------------------------------------------------------------------------------------------------
     ---                                      Misc/other                                          ---
     ------------------------------------------------------------------------------------------------
+
+    -- Stall logic including back propagation
+    stall(0) <= stall(1) or i_instr_mem_ready;  -- Stall(0): PC stalling
+    stall(1) <= stall(2) or i_instr_mem_valid;  -- Stall(1): Instruction fetch
+    stall(2) <= stall(3);                       -- Stall(2): Execution (ALU) stage
+    stall(3) <= stall(4) or i_data_mem_ready;   -- Stall(3): Data memory access
+    stall(4) <= i_data_mem_valid;               -- Stall(4): Write back stage
 
 end architecture riscy_core_rtl;

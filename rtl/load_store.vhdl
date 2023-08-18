@@ -19,7 +19,6 @@ entity riscy_load_store is
         i_clk, i_rst : in std_logic;
 
         -- Back pressure handling
-        i_wait      : in std_logic;  -- From descendat (next) pipeline stage
         o_wait      : out std_logic;  -- To ascendant (previous) pipeline stage
 
         -- Input from execution stage
@@ -29,6 +28,7 @@ entity riscy_load_store is
         i_data      : in std_logic_vector(XLEN-1 downto 0);  -- Input data
 
         -- Data memory interface
+        i_mem_valid : in std_logic;
         i_mem_ready : in std_logic;
         i_mem_data  : in std_logic_vector(XLEN-1 downto 0);
         o_mem_data  : out std_logic_vector(XLEN-1 downto 0);
@@ -39,6 +39,8 @@ entity riscy_load_store is
         -- Output to write back stage
         o_data      : out std_logic_vector(XLEN-1 downto 0);  -- Output data
         o_data_valid: out std_logic;  -- Output data is valid
+
+        -- Fault output
         o_fault     : out fault_type
     );
 end entity riscy_load_store;
@@ -60,8 +62,6 @@ architecture riscy_load_store_rtl of riscy_load_store is
 
     -- Quick (single cycle) memory operations
     signal is_quick         : std_logic;  -- Is and aligned LB, LH, LW or SW
-    signal q_o_mem_addr     : std_logic_vector(XLEN-1 downto 0);
-    signal q_o_mem_data     : std_logic_vector(XLEN-1 downto 0);
 
     -- Non whole word output quick variants
     signal sign_extend      : std_logic;
@@ -73,9 +73,15 @@ architecture riscy_load_store_rtl of riscy_load_store is
     signal addr_del         : std_logic_vector(XLEN-1 downto 0);
 begin
 
+    ------------------------------------------------------------------------------------------------
+    ---                           Decision making control signals                                ---
+    ------------------------------------------------------------------------------------------------
+
     -- Load or store is to be performed?
-    do_load  <= '1' when i_skip = '0' and i_wait = '0' and i_inst.opcode = LOAD  else '0';
-    do_store <= '1' when i_skip = '0' and i_wait = '0' and i_inst.opcode = STORE else '0';
+    do_load  <= '1' when i_skip = '0' and i_inst.opcode = LOAD  else '0';
+    do_store <= '1' when i_skip = '0' and i_inst.opcode = STORE else '0';
+    assert not(do_load = '1' and do_store = '1') 
+        report "DO_LOAD=1 and DO_STORE=1" severity failure;
 
     -- Memory transaction aligned, i.e., it requires only a single memory access
     is_aligned <=
@@ -86,8 +92,21 @@ begin
         '1' when i_inst.funct3 = "101" and i_addr(0) = '0'           else  -- LHU
         '0';
 
-    -- Non whole word output variants
-    sign_extend <= not(inst_del.funct3(2));
+    -- Quick loads and stores, that can be performed in a single cycle
+    is_quick <= 
+        '1' when is_aligned = '1' and do_store = '1' and i_inst.funct3 = "010"  else -- SW
+        '1' when is_aligned = '1' and do_load = '1'                             else -- LB, LH, LW
+        '0';
+
+    -- Next transaction combinatorial logic
+    next_transaction <=
+        STORE_ALIGNED   when is_aligned = '1' and do_store = '1' and i_inst.funct3 /= "010"  else
+        STORE_UNALIGNED when is_aligned = '0' and do_store = '1'                             else
+        LOAD_UNALIGNED  when is_aligned = '0' and do_load  = '1'                              else
+        WAITING;
+
+    -- Non whole word data memory reads
+    sign_extend <= not(inst_del.funct3(2));  -- Sign extension for LH, LB
     q_half(15 downto 0) <=
         i_mem_data(15 downto  0) when addr_del(1 downto 0) = "00" else
         i_mem_data(31 downto 16) when addr_del(1 downto 0) = "10" else
@@ -101,63 +120,10 @@ begin
         (others => '-');
     q_quarter(31 downto 8) <= (others => q_quarter(7)) when sign_extend = '1' else (others => '0');
 
-    -- Delayed instruction
-    process(i_clk)
-    begin
-        if rising_edge(i_clk) then
-            inst_del <= i_inst;
-            addr_del <= i_addr;
-        end if;
-    end process;
+    ------------------------------------------------------------------------------------------------
+    ---                          State machine for memory transactions                           ---
+    ------------------------------------------------------------------------------------------------
 
-    -- Combinatorial next transaction logic
-    process(all)
-    begin
-        if do_load = '0' and do_store = '0' then
-            next_transaction <= WAITING;
-        else
-            if do_load = '1' then
-                if is_aligned = '0' then
-                    next_transaction <= LOAD_UNALIGNED;
-                else
-                    -- Quick load
-                    next_transaction <= WAITING;
-                end if;
-            else  -- do_store = '1'
-                if is_aligned = '0' then
-                    next_transaction <= STORE_UNALIGNED;
-                elsif is_aligned = '1' and i_addr(1 downto 0) /= "00" then
-                    next_transaction <= STORE_ALIGNED;
-                else
-                    -- Quick store
-                    next_transaction <= WAITING;
-                end if;
-            end if;
-        end if;
-    end process;
-
-    -- Quick aligned loads and aligned XLEN stores
-    process(all)
-    begin
-        if is_aligned /= '1' then
-            is_quick <= '0';
-        else
-            if do_load = '1' then
-                -- Aligned LB, LH or LW
-                is_quick <= '1';
-            elsif do_store = '1' and i_inst.funct3 = "010" then
-                -- Aligned SW
-                is_quick <= '1';
-            else
-                -- Aligned SB or SH
-                is_quick <= '0';
-            end if;
-        end if;
-    end process;
-    q_o_mem_data <= i_data;
-    q_o_mem_addr <= i_addr;
-
-    -- State machine for memory transactions
     process(i_clk)
     begin
         if rising_edge(i_clk) then
@@ -172,14 +138,23 @@ begin
                     when LOAD_UNALIGNED =>
                         report "LOAD_UNALIGNED not implemented yet" severity failure;
                         o_fault <= MEMORY_ALIGNMENT_ERROR;
-                    when STORE_ALIGNED =>
-                        report "STORE_ALIGNED not implemented yet" severity failure;
-                        o_fault <= MEMORY_ALIGNMENT_ERROR;
                     when STORE_UNALIGNED =>
                         report "STORE_UNALIGNED not implemented yet" severity failure;
                         o_fault <= MEMORY_ALIGNMENT_ERROR;
+                    when STORE_ALIGNED =>
+                        report "STORE_ALIGNED not implemented yet" severity failure;
+                        o_fault <= MEMORY_ALIGNMENT_ERROR;
                 end case;
             end if;
+        end if;
+    end process;
+
+    -- Delayed instruction
+    process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            inst_del <= i_inst;
+            addr_del <= i_addr;
         end if;
     end process;
 
@@ -187,17 +162,14 @@ begin
     ------------------------------------------------------------------------------------------------
     ---                               Data memory external interface                             ---
     ------------------------------------------------------------------------------------------------
+
     o_mem_addr <=
-        q_o_mem_addr when state = WAITING and is_quick = '1' else
+        i_addr when state = WAITING and is_quick = '1' else
         (others => '-');
 
     o_mem_data <=
-        q_o_mem_data when state = WAITING and is_quick = '1' else
+        i_data when state = WAITING and is_quick = '1' else
         (others => '-');
-
-    o_data_valid <=
-        '1' when state = WAITING and is_quick = '1' and i_mem_ready = '1' else
-        '0';
 
     o_mem_we <=
         '1' when state = WAITING and is_quick = '1' and i_mem_ready = '1' and do_store = '1' else
@@ -212,12 +184,24 @@ begin
     ------------------------------------------------------------------------------------------------
     ---                            Load-store unit external interface                            ---
     ------------------------------------------------------------------------------------------------
+
     o_data <=
         q_quarter   when inst_del.funct3(1 downto 0) = "00" else  -- LB
         q_half      when inst_del.funct3(1 downto 0) = "01" else  -- LH
         i_mem_data  when inst_del.funct3(1 downto 0) = "10" else  -- LW
         (others => '-');
-    o_data_valid <= '1';
+
+    process(all)
+    begin
+        if rising_edge(i_clk) then
+            if state = WAITING and is_quick = '1' and i_mem_valid = '1' then
+                o_data_valid <= '1';
+            else
+                o_data_valid <= '0';
+            end if;
+        end if;
+    end process;
+
     o_wait <= '0';
 
 end architecture riscy_load_store_rtl;
