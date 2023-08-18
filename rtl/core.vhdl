@@ -50,29 +50,34 @@ architecture riscy_core_rtl of riscy_core is
     type IR_pipeline_type is array(0 to 3) of std_logic_vector(XLEN-1 downto 0);
     type inst_pipeline_type is array(0 to 3) of inst_type;
     signal IR                   : IR_pipeline_type;
+    signal IR_saved             : std_logic_vector(XLEN-1 downto 0);
     signal inst                 : inst_pipeline_type;
+    signal inst_saved           : inst_type;
 
-    -- Register file signals
+    -- Register file signals (rs1_data and rs2_data always contain correctly forwarded data)
     type reg_pipeline_type is array(0 to 2) of std_logic_vector(XLEN-1 downto 0);
     signal regfile_data1        : std_logic_vector(XLEN-1 downto 0);
     signal regfile_data2        : std_logic_vector(XLEN-1 downto 0);
     signal rs1_data, rs2_data   : reg_pipeline_type;
-    signal reg_i_data           : std_logic_vector(XLEN-1 downto 0);
-    signal reg_i_adr            : unsigned(4 downto 0);
-    signal reg_i_wen            : std_logic;
+    signal regfile_i_data       : std_logic_vector(XLEN-1 downto 0);
+    signal regfile_i_adr        : unsigned(4 downto 0);
+    signal regfile_i_wen        : std_logic;
     signal regs                 : regfile_vector_type;  -- Readport for all regfile registers
 
-    -- Register forwarding logic (p1: higher priority, p2: lower priority)
-    signal reg_fwd_a_p1         : std_logic;
-    signal reg_fwd_a_p2         : std_logic;
-    signal reg_fwd_b_p1         : std_logic;
-    signal reg_fwd_b_p2         : std_logic;
+    -- Register forwarding logic.
+    -- * bit 0: forward from EX/MEM (higher priority)
+    -- * bit 1: forward from MEM/WB (lower priority)
+    signal reg_fwd_rs1          : std_logic_vector(1 downto 0);
+    signal reg_fwd_rs2          : std_logic_vector(1 downto 0);
 
     -- ALU signals
     type alu_out_vector_type is array(0 to 1) of std_logic_vector(XLEN-1 downto 0);
     signal alu_i_a              : std_logic_vector(XLEN-1 downto 0);
     signal alu_i_b              : std_logic_vector(XLEN-1 downto 0);
     signal alu_o                : alu_out_vector_type;
+    signal ex_stall             : std_logic;  -- Execute stage (ALU) requests stall
+    signal ex_load_stall_rs1    : std_logic;
+    signal ex_load_stall_rs2    : std_logic;
 
     -- Branch signals
     signal branch_take0         : std_logic;  -- Take branch (lower priority)
@@ -86,8 +91,7 @@ architecture riscy_core_rtl of riscy_core is
 
     -- CPU stall signals
     signal stall                : std_logic_vector(0 to 4);
-    signal stall_pc             : std_logic;
-    signal stall_pc_del         : std_logic;
+    signal stall_del            : std_logic_vector(0 to 4);
 
     -- Load store unit signals
     signal load_store_o_valid   : std_logic;
@@ -140,8 +144,12 @@ begin
             if i_rst = '1' then
                 PC <= (others => (others => '0'));
             else
-                PC(0) <= PC_mux;
-                PC(1 to 4) <= PC(0 to 3);
+                if stall(0) = '1' then
+                    PC <= PC;
+                else
+                    PC(0) <= PC_mux;
+                    PC(1 to 4) <= PC(0 to 3);
+                end if;
             end if;
         end if;
     end process;
@@ -150,52 +158,121 @@ begin
     PC_mux <= 
         branch_adr1 when branch_take1 = '1' else
         branch_adr0 when branch_take0 = '1' else
-        PC(0)+0     when stall_pc = '1'     else
         PC(0)+4;
 
     -- Instruction register pipeline (the instruction memory acts as first IR register)
-    IR(0) <= i_instr_mem_data;
     instr_pipeline : process(i_clk)
     begin
         if rising_edge(i_clk) then
             if i_rst = '1' then
-                IR(1 to 3) <= (NOP, NOP, NOP);
+                IR(1 to 3) <= (others => (others => '0'));
             else
-                IR(1 to 3) <= IR(0 to 2);
-                
-                -- Insert NOPs to the instruction pipeline on PC stall
-                if stall_pc_del = '1' then
-                    IR(1) <= NOP;
+                --
+                -- The stalling logic works as following on the instruction register pipeline:
+                --
+                --   * If the stalling signal corresponding to a pipeline stage is SET (=1),
+                --     then the corresponding instruction register (IR) MUST keep its value.
+                --   * If the stalling signal corresponding to a pipeline stage is UN-SET (=0),
+                --     then the corresponding instruction register (IR) will take its value from
+                --     the previous step in the instruction register pipeline (IR-1), unless the
+                --     previous step has its stall signal set, in which case the instruction
+                --     register (IR) will be set to NOP.
+                --
+                -- NOTE: stall(n) corresponds to IR(n-1)
+                --
+                IR(2 to 3) <= IR(1 to 2);
+                for idx in 2 to 3 loop
+                    if stall(idx+1) = '0' then
+                        if stall(idx) = '1' then
+                            IR(idx) <= NOP;
+                        end if;
+                    else -- stall(idx+1) = '1'
+                        IR(idx) <= IR(idx);
+                    end if;
+                end loop;
+
+                --
+                --   * If the instruction decoding stage, directly after the instruction memory,
+                --     has to stall, then temporarly saving of the instruction in the instruction
+                --     memory output has to be done in order not to lose that instruction. Once
+                --     this stage can continue again, the saved instruction needs to be put back to 
+                --     the instruction register pipeline again.
+                --
+                if stall(2) = '0' then
+                    if stall(1) = '1' then
+                        -- Only previous staged stalling
+                        IR(1) <= NOP;
+                    elsif stall_del(1) = '1' then
+                        -- Previous staged stalled one cycle ago, use the saved instruction
+                        IR(1) <= IR_saved;
+                    else
+                        -- No stalling
+                        if i_instr_mem_valid = '1' then
+                            IR(1) <= i_instr_mem_data;
+                        else
+                            IR(1) <= NOP;
+                        end if;
+                    end if;
+                else  -- stall(2) = '1'
+                    IR(1) <= IR(1);
                 end if;
+                
             end if;
         end if;
     end process;
 
     -- Instruction register RTL type
-    process(IR)
+    process(all)
     begin
-        for i in 0 to 3 loop
+        for i in 1 to 3 loop
             inst(i) <= to_inst(IR(i));
         end loop;
+
+        if stall(1) = '0' and stall_del(1) = '1' then
+            inst(0) <= to_inst(IR_saved);
+        else
+            if i_instr_mem_valid = '1' then
+                inst(0) <= to_inst(i_instr_mem_data);
+            else
+                inst(0) <= to_inst(NOP);
+            end if;
+        end if;
     end process;
+
+    -- Saved instruction logic
+    process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if stall(1) = '1' then
+                if stall_del(1) = '0' and i_instr_mem_valid = '1' then
+                    -- About to stall, save the instruction if valid
+                    IR_saved <= i_instr_mem_data;
+                else
+                    -- Stalling (or invalid input instruction), just keep the saved one
+                    IR_saved <= IR_saved;
+                end if;
+            else -- stall(1) = '0' then
+                if i_instr_mem_valid = '1' then
+                    -- Not stalling and valid input, save away the instruction
+                    IR_saved <= i_instr_mem_data;
+                else
+                    -- Not valid instruction from instruction memory, keep the old one
+                    IR_saved <= IR_saved;
+                end if;
+            end if;
+
+        end if;
+    end process;
+    inst_saved <= to_inst(IR_saved);
 
 
     ------------------------------------------------------------------------------------------------
     ---                                    Instruction decode                                    ---
     ------------------------------------------------------------------------------------------------
 
-    -- Stall PC logic (on LOAD instructions)
-    stall_pc <= '1' when inst(0).opcode = LOAD and stall_pc_del = '0' else '0';
-    process(i_clk)
-    begin   
-        if rising_edge(i_clk) then
-            stall_pc_del <= stall_pc;
-        end if;
-    end process;
-
-    -- Skip instruction logic (only skip when not stalling)
+    -- Skip instruction logic
     skip_PC <= 
-        not(stall_pc_del) when 
+        '1' when 
             inst(0).opcode = JAL    or 
             inst(1).opcode = JAL    or
             inst(0).opcode = JALR   or
@@ -225,9 +302,9 @@ begin
             o_rdata1=>regfile_data1,
             i_radr2 =>inst(0).rs2,
             o_rdata2=>regfile_data2,
-            i_wadr=>reg_i_adr,
-            i_wena=>reg_i_wen,
-            i_wdata=>reg_i_data,
+            i_wadr=>regfile_i_adr,
+            i_wena=>regfile_i_wen,
+            i_wdata=>regfile_i_data,
             o_regs=>regs
         );
 
@@ -238,8 +315,8 @@ begin
     begin
         if rising_edge(i_clk) then
             case inst(0).opcode is
-                when JAL     => immediate := to_imm_j(IR(0));
-                when BRANCH  => immediate := to_imm_b(IR(0));
+                when JAL     => immediate := to_imm_j(i_instr_mem_data);
+                when BRANCH  => immediate := to_imm_b(i_instr_mem_data);
                 -- JALR branch address evaluated in ALU
                 when others  => immediate := (others => '-');
             end case;
@@ -256,7 +333,7 @@ begin
     ------------------------------------------------------------------------------------------------
 
     -- Register forwarding logic
-    reg_fwd_a_p1 <= 
+    reg_fwd_rs1(0) <= 
         '1' when skip(2) = '0' and (
                 inst(2).opcode = OP     or 
                 inst(2).opcode = OP_IMM or
@@ -276,7 +353,7 @@ begin
                 inst(1).rs1 /= 0
             )
         else '0';
-    reg_fwd_a_p2 <=
+    reg_fwd_rs1(1) <=
         '1' when skip(3) = '0' and (
                 inst(3).opcode = OP     or
                 inst(3).opcode = OP_IMM or
@@ -297,7 +374,7 @@ begin
                 inst(1).rs1 /= 0
             )
         else '0';
-    reg_fwd_b_p1 <=
+    reg_fwd_rs2(0) <=
         '1' when skip(2) = '0' and (
                 inst(2).opcode = OP     or
                 inst(2).opcode = OP_IMM or
@@ -314,7 +391,7 @@ begin
                 inst(1).rs2 /= 0
             )
         else '0';
-    reg_fwd_b_p2 <=
+    reg_fwd_rs2(1) <=
         '1' when skip(3) = '0' and (
                 inst(3).opcode = OP     or
                 inst(3).opcode = OP_IMM or
@@ -341,14 +418,14 @@ begin
         end if;
     end process;
     rs1_data(0) <=
-        alu_o(0)            when reg_fwd_a_p1 = '1'                             else
-        alu_o(1)            when reg_fwd_a_p2 = '1' and inst(3).opcode /= LOAD  else
-        load_store_o_data   when reg_fwd_a_p2 = '1' and inst(3).opcode  = LOAD  else
+        alu_o(0)            when reg_fwd_rs1(0) = '1'                             else
+        alu_o(1)            when reg_fwd_rs1(1) = '1' and inst(3).opcode /= LOAD  else
+        load_store_o_data   when reg_fwd_rs1(1) = '1' and inst(3).opcode  = LOAD  else
         regfile_data1;
     rs2_data(0) <=
-        alu_o(0)            when reg_fwd_b_p1 = '1' else
-        alu_o(1)            when reg_fwd_b_p2 = '1' and inst(3).opcode /= LOAD  else
-        load_store_o_data   when reg_fwd_b_p2 = '1' and inst(3).opcode  = LOAD  else
+        alu_o(0)            when reg_fwd_rs2(0) = '1' else
+        alu_o(1)            when reg_fwd_rs2(1) = '1' and inst(3).opcode /= LOAD  else
+        load_store_o_data   when reg_fwd_rs2(1) = '1' and inst(3).opcode  = LOAD  else
         regfile_data2;
 
 
@@ -397,6 +474,38 @@ begin
         std_logic_vector(to_imm_s(IR(1))) when inst(1).opcode = STORE       else
         rs2_data(0);
 
+    -- Load stalling
+    ex_stall <= ex_load_stall_rs1 or ex_load_stall_rs2;
+    ex_load_stall_rs1 <= 
+        '1' when skip(2) = '0' and (
+                inst(2).opcode = LOAD
+            ) and (
+                inst(1).opcode = OP     or
+                inst(1).opcode = OP_IMM or
+                inst(1).opcode = LOAD   or
+                inst(1).opcode = STORE  or
+                inst(1).opcode = JALR   or
+                inst(1).opcode = BRANCH
+            ) and (
+                inst(1).rs1 = inst(2).rd
+            ) and (
+                inst(1).rs1 /= 0
+            )
+        else '0';
+    ex_load_stall_rs2 <=
+        '1' when skip(2) = '0' and (
+                inst(1).opcode = LOAD
+            ) and (
+                inst(1).opcode = OP     or
+                inst(1).opcode = STORE  or
+                inst(1).opcode = BRANCH
+            ) and (
+                inst(1).rs2 = inst(2).rd
+            ) and (
+                inst(1).rs2 /= 0
+            )
+        else '0';
+
 
     ------------------------------------------------------------------------------------------------
     ---                                      Data Memory                                         ---
@@ -438,8 +547,8 @@ begin
     ---                                       Writeback                                          ---
     ------------------------------------------------------------------------------------------------
 
-    reg_i_adr <= inst(3).rd;
-    reg_i_data <= 
+    regfile_i_adr <= inst(3).rd;
+    regfile_i_data <= 
         load_store_o_data       when inst(3).opcode = LOAD      else
         alu_o(1)                when inst(3).opcode = OP        else
         alu_o(1)                when inst(3).opcode = OP_IMM    else
@@ -448,8 +557,7 @@ begin
         std_logic_vector(PC(3)) when inst(3).opcode = JALR      else
         std_logic_vector(PC(3)) when inst(3).opcode = JAL       else
         (others => '-');
-        
-    reg_i_wen <= 
+    regfile_i_wen <= 
         '1' when skip(3) = '0' and (
                (inst(3).opcode = LOAD and load_store_o_valid = '1') or 
                 inst(3).opcode = OP      or
@@ -467,10 +575,23 @@ begin
     ------------------------------------------------------------------------------------------------
 
     -- Stall logic including back propagation
-    stall(0) <= stall(1) or i_instr_mem_ready;  -- Stall(0): PC stalling
-    stall(1) <= stall(2) or i_instr_mem_valid;  -- Stall(1): Instruction fetch
-    stall(2) <= stall(3);                       -- Stall(2): Execution (ALU) stage
-    stall(3) <= stall(4) or i_data_mem_ready;   -- Stall(3): Data memory access
-    stall(4) <= i_data_mem_valid;               -- Stall(4): Write back stage
+    -- * NOTE: stall(n) corresponds to IR(n-1)
+    stall(0) <= stall(1) or not(i_instr_mem_ready);  -- Stall(0): PC stalling
+    stall(1) <= stall(2) or not(i_instr_mem_valid);  -- Stall(1): Decoding stage
+    stall(2) <= stall(3) or ex_stall;                -- Stall(2): Execution (ALU) stage
+    stall(3) <=                                      -- Stall(3): Memory access stage
+        '1' when stall(4) = '1'                                     else
+        '1' when i_data_mem_ready = '0' and inst(2).opcode = LOAD   else
+        '1' when i_data_mem_ready = '0' and inst(2).opcode = STORE  else
+        '0';
+    stall(4) <=                                      -- Stall(4): Write-back stage
+        '1' when i_data_mem_valid = '0' and inst(3).opcode = LOAD else  
+        '0';
+    process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            stall_del <= stall;
+        end if;
+    end process;
 
 end architecture riscy_core_rtl;
