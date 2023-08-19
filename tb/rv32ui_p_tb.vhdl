@@ -48,7 +48,7 @@ begin
     time_out_tester : process
     begin
         wait for 100 us;
-        report "Timeout: more than 100 000 clk cycles passed without success" severity failure;
+        report "Timeout: more than 10 000 clk cycles passed without success" severity failure;
     end process;
 
     --
@@ -83,7 +83,7 @@ begin
     end process;
 
     --
-    -- clk [1 GHz] and rst generation
+    -- clk [100 MHz] and rst generation
     --
     rst <= '1', '0' after 100 ns;
     process begin
