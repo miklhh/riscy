@@ -157,6 +157,11 @@ begin
     -- Instruction register pipeline (the instruction memory acts as first IR register)
     instr_pipeline : process(i_clk)
     begin
+
+        -- IR(0) is combinatorial signal assigned outside of the process
+        -- This assignment is to mitigate the VHDL concept Longest Static Prefix
+        IR(0) <= (others => 'Z');
+
         if rising_edge(i_clk) then
             if i_rst = '1' then
                 IR(1 to 3) <= (others => (others => '0'));
@@ -174,8 +179,8 @@ begin
                 --
                 -- NOTE: stall(n) corresponds to IR(n-1)
                 --
-                IR(2 to 3) <= IR(1 to 2);
-                for idx in 2 to 3 loop
+                IR(1 to 3) <= IR(0 to 2);
+                for idx in 1 to 3 loop
                     if stall(idx+1) = '0' then
                         if stall(idx) = '1' then
                             IR(idx) <= NOP;
@@ -224,14 +229,18 @@ begin
     -- Instruction register RTL type
     process(all)
     begin
-        for i in 1 to 3 loop
+        for i in 0 to 3 loop
             inst(i) <= to_inst(IR(i));
         end loop;
+    end process;
 
-        if stall(1) = '0' and stall_del(1) = '1' then
-            inst(0) <= to_inst(IR_saved);
+    -- Logic for selecting the first instruction of the instruction pipeline
+    process(all)
+    begin
+        if stall(1) = '1' or stall_del(1) = '1' then
+            IR(0) <= IR_saved;
         else
-            inst(0) <= to_inst(i_instr_mem_data);
+            IR(0) <= i_instr_mem_data;
         end if;
     end process;
 
@@ -592,5 +601,15 @@ begin
             stall_del <= stall;
         end if;
     end process;
+
+    -- Some testing of forced stalling
+    process
+    begin
+        wait for 200 ns;
+        stall <= force "11100";
+        wait for 200 ns;
+        stall <= release;
+    end process;
+
 
 end architecture riscy_core_rtl;
