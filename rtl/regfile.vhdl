@@ -13,6 +13,9 @@ entity riscy_regfile is
     port(
         i_clk, i_rst : in std_logic;
 
+        -- Register file stalling
+        i_stall     : in std_logic;
+
         -- Read port 1 (RS1)
         i_radr1     : in unsigned(4 downto 0);
         o_rdata1    : out std_logic_vector(XLEN-1 downto 0);
@@ -32,8 +35,9 @@ entity riscy_regfile is
 end entity riscy_regfile;
 
 architecture riscy_regfile_rtl of riscy_regfile is
-    signal regs_soft    : regfile_vector_type;
-    signal regs         : regfile_vector_type;
+    signal regs_soft        : regfile_vector_type;
+    signal regs             : regfile_vector_type;
+    signal rdata1, rdata2   : std_logic_vector(XLEN-1 downto 0);
 begin
 
     -- Register file logic
@@ -42,21 +46,25 @@ begin
         if rising_edge(i_clk) then
 
             -- Read port 1
-            if i_wena = '1' and i_radr1 > 0 and i_radr1 = i_wadr then
+            if i_stall = '1' then
+                rdata1 <= rdata1;
+            elsif i_wena = '1' and i_radr1 > 0 and i_radr1 = i_wadr then
                 -- Read-after-write
-                o_rdata1 <= i_wdata;
+                rdata1 <= i_wdata;
             else
                 -- Normal read
-                o_rdata1 <= regs(to_integer(i_radr1));
+                rdata1 <= regs(to_integer(i_radr1));
             end if;
 
             -- Read port 2
-            if i_wena = '1' and i_radr2 > 0 and i_radr2 = i_wadr then
+            if i_stall = '1' then
+                rdata2 <= rdata2;
+            elsif i_wena = '1' and i_radr2 > 0 and i_radr2 = i_wadr then
                 -- Read-after-write
-                o_rdata2 <= i_wdata;
+                rdata2 <= i_wdata;
             else
                 -- Normal read
-                o_rdata2 <= regs(to_integer(i_radr2));
+                rdata2 <= regs(to_integer(i_radr2));
             end if;
 
             -- Write port (soft reg file)
@@ -72,6 +80,10 @@ begin
     -- Zero register always zero
     regs(1 to 31) <= regs_soft(1 to 31);
     regs(0) <= (others => '0');
+
+    -- Assign outputs
+    o_rdata1 <= rdata1;
+    o_rdata2 <= rdata2;
 
     -- (Optional) all registers read port)
     o_regs <= regs;

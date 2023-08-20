@@ -23,6 +23,7 @@ entity riscy_alu is
         i_opcode    : in std_logic_vector(6 downto 0);
         i_funct3    : in std_logic_vector(2 downto 0);
         i_funct7    : in std_logic_vector(6 downto 0);
+        i_stall     : in std_logic;
 
         -- Output
         o_data      : out std_logic_vector(XLEN-1 downto 0)
@@ -30,7 +31,6 @@ entity riscy_alu is
 end entity riscy_alu;
 
 architecture riscy_alu_rtl of riscy_alu is
-    signal result       : std_logic_vector(XLEN-1 downto 0);
 
     -- XLEN+2 bit signed adder with carry in
     signal data1_ext    : signed(XLEN+1 downto 0);
@@ -58,6 +58,10 @@ architecture riscy_alu_rtl of riscy_alu is
     signal and_out      : std_logic_vector(XLEN-1 downto 0);
     signal or_out       : std_logic_vector(XLEN-1 downto 0);
     signal xor_out      : std_logic_vector(XLEN-1 downto 0);
+
+    -- Resulting data
+    signal result       : std_logic_vector(XLEN-1 downto 0);
+    signal result_reg   : std_logic_vector(XLEN-1 downto 0);
     
 begin
 
@@ -171,8 +175,13 @@ begin
     process(i_clk)
     begin
         if rising_edge(i_clk) then
-            o_data <= result;
+            if i_stall = '1' then
+                result_reg <= result_reg;
+            else
+                result_reg <= result;
+            end if;
         end if;
     end process;
+    o_data <= result_reg;
 
 end architecture;

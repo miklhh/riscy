@@ -24,6 +24,7 @@ entity riscy_branch_test is
         i_funct3            : in std_logic_vector(2 downto 0);
         i_funct7            : in std_logic_vector(6 downto 0);
         i_skip              : in std_logic;
+        i_stall             : in std_logic;
 
         -- Output
         o_branch_take0      : out std_logic;   -- Take branch this clock cycle (lower priority)
@@ -39,6 +40,7 @@ architecture riscy_branch_test_rtl of riscy_branch_test is
     signal sign_extend      : std_logic;
     signal branch_take0     : std_logic;  -- Take branch this clock cycle (lower priority)
     signal branch_take1     : std_logic;  -- Take branch next clock cycle (higher priority)
+    signal branch_take1_reg : std_logic;
 begin
 
     -- Subtract operand B from A
@@ -98,9 +100,14 @@ begin
     process(i_clk)
     begin
         if rising_edge(i_clk) then
-            o_branch_take1 <= branch_take1 and not(i_skip);
+            if i_stall = '1' then
+                branch_take1_reg <= branch_take1_reg;
+            else
+                branch_take1_reg <= branch_take1 and not(i_skip);
+            end if;
         end if;
     end process;
+    o_branch_take1 <= branch_take1_reg;
 
     -- Sanity check
     assert not(branch_take0 = '1' and branch_take1 = '1')

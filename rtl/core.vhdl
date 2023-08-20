@@ -50,7 +50,6 @@ architecture riscy_core_rtl of riscy_core is
     signal IR                   : IR_pipeline_type;
     signal IR_saved             : std_logic_vector(XLEN-1 downto 0);
     signal inst                 : inst_pipeline_type;
-    signal inst_saved           : inst_type;
 
     -- Register file signals (rs1_data and rs2_data always contain correctly forwarded data)
     type reg_pipeline_type is array(0 to 2) of std_logic_vector(XLEN-1 downto 0);
@@ -73,7 +72,7 @@ architecture riscy_core_rtl of riscy_core is
     signal alu_i_a              : std_logic_vector(XLEN-1 downto 0);
     signal alu_i_b              : std_logic_vector(XLEN-1 downto 0);
     signal alu_o                : alu_out_vector_type;
-    signal ex_stall             : std_logic;  -- Execute stage (ALU) requests stall
+    signal ex_load_stall        : std_logic;  -- Execute stage (ALU) requests stall
     signal ex_load_stall_rs1    : std_logic;
     signal ex_load_stall_rs2    : std_logic;
 
@@ -140,9 +139,11 @@ begin
             if i_rst = '1' then
                 PC <= (others => (others => '0'));
             else
-                -- Stalling of PC is handeled in PC mux
-                PC(0) <= PC_mux;
-                PC(1 to 4) <= PC(0 to 3);
+                PC(0) <= PC_mux;  -- Stalling of PC(0) is handeled in PC mux
+                PC(1) <= (stall(1) and PC(1)) or (not(stall(1)) and PC(0));
+                PC(2) <= (stall(2) and PC(2)) or (not(stall(2)) and PC(1));
+                PC(3) <= (stall(3) and PC(3)) or (not(stall(3)) and PC(2));
+                PC(4) <= (stall(4) and PC(4)) or (not(stall(4)) and PC(3));
             end if;
         end if;
     end process;
@@ -159,7 +160,7 @@ begin
     begin
 
         -- IR(0) is combinatorial signal assigned outside of the process
-        -- This assignment is to mitigate the VHDL concept Longest Static Prefix
+        -- This assignment is to mitigate the VHDL concept: Longest Static Prefix
         IR(0) <= (others => 'Z');
 
         if rising_edge(i_clk) then
@@ -176,6 +177,11 @@ begin
                 --     the previous step in the instruction register pipeline (IR-1), unless the
                 --     previous step has its stall signal set, in which case the instruction
                 --     register (IR) will be set to NOP.
+                --   * If the instruction decoding stage, directly after the instruction memory,
+                --     has to stall, then temporarly saving of the instruction in the instruction
+                --     memory output has to be done in order not to lose that instruction. Once
+                --     this stage can continue again, the saved instruction needs to be put back
+                --     to the instruction register pipeline again.
                 --
                 -- NOTE: stall(n) corresponds to IR(n-1)
                 --
@@ -189,39 +195,6 @@ begin
                         IR(idx) <= IR(idx);
                     end if;
                 end loop;
-
-                --
-                -- * If the instruction decoding stage, directly after the instruction memory,
-                --   has to stall, then temporarly saving of the instruction in the instruction
-                --   memory output has to be done in order not to lose that instruction. Once
-                --   this stage can continue again, the saved instruction needs to be put back to 
-                --   the instruction register pipeline again.
-                --
-                if stall(0) = '0' then
-                    if stall_del(1) = '1' then
-                        -- Recover saved instruction
-                        IR(1) <= IR_saved;
-                    else
-                        IR(1) <= i_instr_mem_data;
-                    end if;
-                else  -- stall(0) = '1'
-                    if stall(1) = '0' then
-                        if stall_del(0) = '0' then
-                            -- Still a valid instruction in instruction mem output
-                            IR(1) <= i_instr_mem_data;
-                        else
-                            -- PC is stalling, no valid data left
-                            IR(1) <= NOP;
-                        end if;
-                    else  -- stall(1) = '1'
-                        if stall(2) = '0' then
-                            IR(1) <= NOP;
-                        else
-                            IR(1) <= IR(1);
-                        end if;
-                    end if;
-                end if;
-                
             end if;
         end if;
     end process;
@@ -237,9 +210,14 @@ begin
     -- Logic for selecting the first instruction of the instruction pipeline
     process(all)
     begin
-        if stall(1) = '1' or stall_del(1) = '1' then
+        if stall_del(1) = '1' then
+            -- Prio 1: Use the preserved instruction
             IR(0) <= IR_saved;
+        elsif stall_del(0) = '1' then
+            -- Prio 2: PC stalled previous cycle, data is invalid
+            IR(0) <= NOP;
         else
+            -- Prio 3: The instruction is available from the instruction memory
             IR(0) <= i_instr_mem_data;
         end if;
     end process;
@@ -255,7 +233,6 @@ begin
             end if;
         end if;
     end process;
-    inst_saved <= to_inst(IR_saved);
 
 
     ------------------------------------------------------------------------------------------------
@@ -265,11 +242,11 @@ begin
     -- Skip instruction logic
     skip_PC <= 
         '1' when 
-            inst(0).opcode = JAL    or 
-            inst(1).opcode = JAL    or
-            inst(0).opcode = JALR   or
-            inst(1).opcode = JALR   or
-            inst(2).opcode = JALR
+            (inst(0).opcode = JAL  and skip(0) = '0') or 
+            (inst(1).opcode = JAL  and skip(1) = '0') or
+            (inst(0).opcode = JALR and skip(0) = '0') or
+            (inst(1).opcode = JALR and skip(1) = '0') or
+            (inst(2).opcode = JALR and skip(2) = '0')
         else '0';
     process(i_clk)
     begin
@@ -278,7 +255,7 @@ begin
                 skip(0 to 3) <= (others => '1');
             else
                 skip(0) <= (stall(1) and skip(0)) or (not(stall(1)) and skip_PC) or branch_take0;
-                skip(1) <= (stall(2) and skip(1)) or (not(stall(2)) and skip(0)) or branch_take0;
+                skip(1) <= (stall(2) and skip(1)) or (not(stall(2)) and (skip(0) or branch_take0));
                 skip(2) <= (stall(3) and skip(2)) or (not(stall(3)) and skip(1));
                 skip(3) <= (stall(4) and skip(3)) or (not(stall(4)) and skip(2));
             end if;
@@ -290,6 +267,7 @@ begin
         port map (
             i_clk=>i_clk,
             i_rst=>i_rst,
+            i_stall=>stall(1),
             i_radr1=>inst(0).rs1,
             o_rdata1=>regfile_data1,
             i_radr2 =>inst(0).rs2,
@@ -307,14 +285,14 @@ begin
     begin
         if rising_edge(i_clk) then
             case inst(0).opcode is
-                when JAL     => immediate := to_imm_j(i_instr_mem_data);
-                when BRANCH  => immediate := to_imm_b(i_instr_mem_data);
+                when JAL     => immediate := to_imm_j(IR(0));
+                when BRANCH  => immediate := to_imm_b(IR(0));
                 -- JALR branch address evaluated in ALU
                 when others  => immediate := (others => '-');
             end case;
             sum := unsigned( signed(PC(1)) + immediate );
             branch_adr0(0) <= '0';
-            if stall(2) = '1' then
+            if stall(1) = '1' then
                 branch_adr0(XLEN-1 downto 1) <= branch_adr0(XLEN-1 downto 1);
             else
                 branch_adr0(XLEN-1 downto 1) <= sum(XLEN-1 downto 1);
@@ -442,6 +420,7 @@ begin
     port map (
         i_clk=>i_clk,
         i_rst=>i_rst,
+        i_stall=>stall(2),
         i_opa=>rs1_data(0),
         i_opb=>rs2_data(0),
         i_opcode=>from_opcode(inst(1).opcode),
@@ -457,6 +436,7 @@ begin
     port map (
         i_clk=>i_clk,
         i_rst=>i_rst,
+        i_stall=>stall(2),
         i_data1=>alu_i_a,
         i_data2=>alu_i_b,
         i_opcode=>IR(1)(6 downto 0),
@@ -487,7 +467,7 @@ begin
         rs2_data(0);
 
     -- Load stalling
-    ex_stall <= ex_load_stall_rs1 or ex_load_stall_rs2;
+    ex_load_stall <= ex_load_stall_rs1 or ex_load_stall_rs2;
     ex_load_stall_rs1 <= 
         '1' when skip(2) = '0' and (
                 inst(2).opcode = LOAD
@@ -531,6 +511,7 @@ begin
         i_rst=>i_rst,
         i_skip=>skip(2),
         i_inst=>inst(2),
+        i_stall=>stall(4),  -- WB stage: stall(4)
         i_addr=>load_store_i_addr,
         i_data=>load_store_i_data,
 
@@ -588,7 +569,7 @@ begin
     -- * NOTE: stall(n) corresponds to IR(n-1)
     stall(0) <= stall(1) or not(i_instr_mem_ready);  -- Stall(0): PC stalling
     stall(1) <= stall(2);                            -- Stall(1): Decoding stage
-    stall(2) <= stall(3) or ex_stall;                -- Stall(2): Execution (ALU) stage
+    stall(2) <= stall(3) or ex_load_stall;           -- Stall(2): Execution (ALU) stage
     stall(3) <=                                      -- Stall(3): Memory access stage
         '1' when stall(4) = '1'                                     else
         '1' when i_data_mem_ready = '0' and inst(2).opcode = LOAD   else
@@ -601,15 +582,5 @@ begin
             stall_del <= stall;
         end if;
     end process;
-
-    -- Some testing of forced stalling
-    process
-    begin
-        wait for 200 ns;
-        stall <= force "11100";
-        wait for 200 ns;
-        stall <= release;
-    end process;
-
 
 end architecture riscy_core_rtl;

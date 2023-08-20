@@ -24,6 +24,10 @@ entity riscy_load_store is
         i_addr      : in std_logic_vector(XLEN-1 downto 0);  -- Input address
         i_data      : in std_logic_vector(XLEN-1 downto 0);  -- Input data
 
+        -- Stalling
+        i_stall     : in std_logic;  -- Next stage indicating stall
+        o_stall     : out std_logic; -- Stalling requested
+
         -- Data memory interface
         i_mem_ready : in std_logic;
         i_mem_data  : in std_logic_vector(XLEN-1 downto 0);
@@ -67,6 +71,13 @@ architecture riscy_load_store_rtl of riscy_load_store is
     -- Delayed instruciton and target address
     signal inst_del         : inst_type;
     signal addr_del         : std_logic_vector(XLEN-1 downto 0);
+
+    -- Stalling data preservation
+    signal mem_data_saved   : std_logic_vector(XLEN-1 downto 0);
+    signal mem_data_mux     : std_logic_vector(XLEN-1 downto 0);
+    signal data_valid_reg   : std_logic;
+    signal stall_del        : std_logic;
+
 begin
 
     ------------------------------------------------------------------------------------------------
@@ -115,6 +126,15 @@ begin
         i_mem_data(31 downto 24) when addr_del(1 downto 0) = "11" else
         (others => '-');
     q_quarter(31 downto 8) <= (others => q_quarter(7)) when sign_extend = '1' else (others => '0');
+
+    -- Delayed stall signal
+    process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            stall_del <= i_stall;
+        end if;
+    end process;
+
 
     ------------------------------------------------------------------------------------------------
     ---                          State machine for memory transactions                           ---
@@ -181,20 +201,48 @@ begin
     ---                            Load-store unit external interface                            ---
     ------------------------------------------------------------------------------------------------
 
-    o_data <=
+    mem_data_mux <=
         q_quarter   when inst_del.funct3(1 downto 0) = "00" else  -- LB
         q_half      when inst_del.funct3(1 downto 0) = "01" else  -- LH
         i_mem_data  when inst_del.funct3(1 downto 0) = "10" else  -- LW
         (others => '-');
 
+    -- Saved memory data logic
+    process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_stall = '1' and stall_del = '0' then
+                mem_data_saved <= mem_data_mux;
+            else
+                mem_data_saved <= mem_data_saved;
+            end if;
+        end if;
+    end process;
+
+    -- Data valid logic
     process(all)
     begin
         if rising_edge(i_clk) then
-            if state = WAITING and is_quick = '1' and i_mem_ready = '1' then
-                o_data_valid <= '1';
-            else
-                o_data_valid <= '0';
+            if i_stall = '1' then
+                data_valid_reg <= data_valid_reg;
+            else  -- i_stall = '0'
+                if state = WAITING and is_quick = '1' and i_mem_ready = '1' then
+                    data_valid_reg <= '1';
+                else
+                    data_valid_reg <= '0';
+                end if;
             end if;
+        end if;
+    end process;
+    o_data_valid <= data_valid_reg;
+
+    -- Load instruction data selection logic
+    process(all)
+    begin
+        if stall_del = '1' then
+            o_data <= mem_data_saved;
+        else
+            o_data <= mem_data_mux;
         end if;
     end process;
 
