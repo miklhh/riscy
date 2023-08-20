@@ -72,9 +72,6 @@ architecture riscy_core_rtl of riscy_core is
     signal alu_i_a              : std_logic_vector(XLEN-1 downto 0);
     signal alu_i_b              : std_logic_vector(XLEN-1 downto 0);
     signal alu_o                : alu_out_vector_type;
-    signal ex_load_stall        : std_logic;  -- Execute stage (ALU) requests stall
-    signal ex_load_stall_rs1    : std_logic;
-    signal ex_load_stall_rs2    : std_logic;
 
     -- Branch signals
     signal branch_take0         : std_logic;  -- Take branch (lower priority)
@@ -96,6 +93,9 @@ architecture riscy_core_rtl of riscy_core is
     signal load_store_i_addr    : std_logic_vector(XLEN-1 downto 0);
     signal load_store_o_valid   : std_logic;
     signal load_store_fault     : fault_type;
+    signal id_load_stall        : std_logic;  -- ID stage: stall due to LOAD read-after-read
+    signal id_load_stall_rs1    : std_logic;
+    signal id_load_stall_rs2    : std_logic;
 
 begin
 
@@ -467,34 +467,34 @@ begin
         rs2_data(0);
 
     -- Load stalling
-    ex_load_stall <= ex_load_stall_rs1 or ex_load_stall_rs2;
-    ex_load_stall_rs1 <= 
-        '1' when skip(2) = '0' and (
-                inst(2).opcode = LOAD
-            ) and (
-                inst(1).opcode = OP     or
-                inst(1).opcode = OP_IMM or
-                inst(1).opcode = LOAD   or
-                inst(1).opcode = STORE  or
-                inst(1).opcode = JALR   or
-                inst(1).opcode = BRANCH
-            ) and (
-                inst(1).rs1 = inst(2).rd
-            ) and (
-                inst(1).rs1 /= 0
-            )
-        else '0';
-    ex_load_stall_rs2 <=
-        '1' when skip(2) = '0' and (
+    id_load_stall <= id_load_stall_rs1 or id_load_stall_rs2;
+    id_load_stall_rs1 <= 
+        '1' when skip(1) = '0' and skip(2) = '0' and (
                 inst(1).opcode = LOAD
             ) and (
-                inst(1).opcode = OP     or
-                inst(1).opcode = STORE  or
-                inst(1).opcode = BRANCH
+                inst(0).opcode = OP     or
+                inst(0).opcode = OP_IMM or
+                inst(0).opcode = LOAD   or
+                inst(0).opcode = STORE  or
+                inst(0).opcode = JALR   or
+                inst(0).opcode = BRANCH
             ) and (
-                inst(1).rs2 = inst(2).rd
+                inst(0).rs1 = inst(1).rd
             ) and (
-                inst(1).rs2 /= 0
+                inst(0).rs1 /= 0
+            )
+        else '0';
+    id_load_stall_rs2 <=
+        '1' when skip(1) = '0' and skip(2) = '0' and (
+                inst(1).opcode = LOAD
+            ) and (
+                inst(0).opcode = OP     or
+                inst(0).opcode = STORE  or
+                inst(0).opcode = BRANCH
+            ) and (
+                inst(0).rs2 = inst(1).rd
+            ) and (
+                inst(0).rs2 /= 0
             )
         else '0';
 
@@ -565,22 +565,34 @@ begin
     ---                                      Misc/other                                          ---
     ------------------------------------------------------------------------------------------------
 
-    -- Stall logic including back propagation
-    -- * NOTE: stall(n) corresponds to IR(n-1)
-    stall(0) <= stall(1) or not(i_instr_mem_ready);  -- Stall(0): PC stalling
-    stall(1) <= stall(2);                            -- Stall(1): Decoding stage
-    stall(2) <= stall(3) or ex_load_stall;           -- Stall(2): Execution (ALU) stage
-    stall(3) <=                                      -- Stall(3): Memory access stage
+    --
+    -- Pipeline stalling logic:
+    -- Stalling of a pipeline stage applies backward pressure to the previous stages in the
+    -- pipeline. It is generally (un)safe to apply stalling the following stages:
+    -- *   SAFE: stall(0), the IF stage (PC)
+    -- *   SAFE: stall(1), the ID stage
+    -- * UNSAFE: stall(2), the EX stage
+    -- * UNSAFE: stall(3), the MEM stage
+    -- *   SAFE: stall(4), the WB stage
+    -- The reaseon stall(2) and stall(3) are unsafe to is because un-commited register data (RD),
+    -- which normally gets forwarded, might escape the pipeline which makes data-forwarding
+    -- impossible to complete.
+    --
+    stall(0) <= stall(1) or not(i_instr_mem_ready);  -- Stall(0): Instruction fetching (PC)
+    stall(1) <= stall(2) or id_load_stall;           -- Stall(1): Instruction decoding
+    stall(2) <= stall(3);                            -- Stall(2): Execution (ALU) stage
+    stall(3) <= stall(4);                            -- Stall(3): Memory access stage
+    stall(4) <=                                      -- Stall(4): Write-back stage
         '1' when stall(4) = '1'                                     else
         '1' when i_data_mem_ready = '0' and inst(2).opcode = LOAD   else
         '1' when i_data_mem_ready = '0' and inst(2).opcode = STORE  else
         '0';
-    stall(4) <= '0';                                 -- Stall(4): Write-back stage
     process(i_clk)
     begin
         if rising_edge(i_clk) then
             stall_del <= stall;
         end if;
     end process;
+
 
 end architecture riscy_core_rtl;
