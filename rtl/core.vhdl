@@ -33,7 +33,10 @@ entity riscy_core is
         -- CPU core fault and environment 
         o_core_fault        : out fault_type;
         o_ecall             : out std_logic;
-        o_ecall_regs        : out regfile_vector_type
+        o_ecall_regs        : out regfile_vector_type;
+
+        -- Stalling injection
+        i_stall             : in std_logic_vector(0 to 4)
     );
 end entity riscy_core;
 
@@ -53,6 +56,8 @@ architecture riscy_core_rtl of riscy_core is
 
     -- Register file signals (rs1_data and rs2_data always contain correctly forwarded data)
     type reg_pipeline_type is array(0 to 2) of std_logic_vector(XLEN-1 downto 0);
+    signal regfile_radr1        : unsigned(4 downto 0);
+    signal regfile_radr2        : unsigned(4 downto 0);
     signal regfile_data1        : std_logic_vector(XLEN-1 downto 0);
     signal regfile_data2        : std_logic_vector(XLEN-1 downto 0);
     signal rs1_data, rs2_data   : reg_pipeline_type;
@@ -93,7 +98,8 @@ architecture riscy_core_rtl of riscy_core is
     signal load_store_i_addr    : std_logic_vector(XLEN-1 downto 0);
     signal load_store_o_valid   : std_logic;
     signal load_store_fault     : fault_type;
-    signal id_load_stall        : std_logic;  -- ID stage: stall due to LOAD read-after-read
+    signal load_store_o_stall   : std_logic;  -- Load-store unit requests stalling
+    signal id_load_stall        : std_logic;  -- ID stage: stall due to Read-after-Load
     signal id_load_stall_rs1    : std_logic;
     signal id_load_stall_rs2    : std_logic;
 
@@ -267,16 +273,17 @@ begin
         port map (
             i_clk=>i_clk,
             i_rst=>i_rst,
-            i_stall=>stall(1),
-            i_radr1=>inst(0).rs1,
+            i_radr1=>regfile_radr1,
             o_rdata1=>regfile_data1,
-            i_radr2 =>inst(0).rs2,
+            i_radr2 =>regfile_radr2,
             o_rdata2=>regfile_data2,
             i_wadr=>regfile_i_adr,
             i_wena=>regfile_i_wen,
             i_wdata=>regfile_i_data,
             o_regs=>regs
         );
+    regfile_radr1 <= inst(1).rs1 when stall(1) = '1' else inst(0).rs1;
+    regfile_radr2 <= inst(1).rs2 when stall(1) = '1' else inst(0).rs2;
 
     -- Branch address selection
     process(i_clk)
@@ -420,7 +427,7 @@ begin
     port map (
         i_clk=>i_clk,
         i_rst=>i_rst,
-        i_stall=>stall(2),
+        i_stall=>stall(3),
         i_opa=>rs1_data(0),
         i_opb=>rs2_data(0),
         i_opcode=>from_opcode(inst(1).opcode),
@@ -511,7 +518,8 @@ begin
         i_rst=>i_rst,
         i_skip=>skip(2),
         i_inst=>inst(2),
-        i_stall=>stall(4),  -- WB stage: stall(4)
+        i_stall=>stall(4),              -- WB stage: stall(4)
+        o_stall=>load_store_o_stall,    -- MEM stage: stall(3)
         i_addr=>load_store_i_addr,
         i_data=>load_store_i_data,
 
@@ -568,22 +576,14 @@ begin
     --
     -- Pipeline stalling logic:
     -- Stalling of a pipeline stage applies backward pressure to the previous stages in the
-    -- pipeline. It is generally (un)safe to apply stalling the following stages:
-    -- *   SAFE: stall(0), the IF stage (PC)
-    -- *   SAFE: stall(1), the ID stage
-    -- * UNSAFE: stall(2), the EX stage
-    -- * UNSAFE: stall(3), the MEM stage
-    -- *   SAFE: stall(4), the WB stage
-    -- The reaseon stall(2) and stall(3) are unsafe to is because un-commited register data (RD),
-    -- which normally gets forwarded, might escape the pipeline which makes data-forwarding
-    -- impossible to complete.
+    -- pipeline. It is generally safe to apply stalling externally to any pipeline stage.
     --
-    stall(0) <= stall(1) or not(i_instr_mem_ready);  -- Stall(0): Instruction fetching (PC)
-    stall(1) <= stall(2) or id_load_stall;           -- Stall(1): Instruction decoding
-    stall(2) <= stall(3);                            -- Stall(2): Execution (ALU) stage
-    stall(3) <= stall(4);                            -- Stall(3): Memory access stage
-    stall(4) <=                                      -- Stall(4): Write-back stage
-        '1' when stall(4) = '1'                                     else
+    stall(0) <= i_stall(0) or stall(1) or not(i_instr_mem_ready);  -- Stall(0): IF
+    stall(1) <= i_stall(1) or stall(2) or id_load_stall;           -- Stall(1): ID
+    stall(2) <= i_stall(2) or stall(3);                            -- Stall(2): EX
+    stall(3) <= i_stall(3) or stall(4) or load_store_o_stall;      -- Stall(3): MEM
+    stall(4) <=                                                    -- Stall(4): WB
+        '1' when i_stall(4) = '1'                                   else
         '1' when i_data_mem_ready = '0' and inst(2).opcode = LOAD   else
         '1' when i_data_mem_ready = '0' and inst(2).opcode = STORE  else
         '0';

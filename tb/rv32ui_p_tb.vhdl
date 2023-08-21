@@ -27,6 +27,9 @@ architecture tb_rtl of rv32ui_p_tb is
     signal ecall            : std_logic;
     signal ecall_regs       : regfile_vector_type;
 
+    -- Stall injection
+    signal stall            : std_logic_vector(0 to 4);
+
 begin
 
     --
@@ -104,8 +107,19 @@ begin
         -- CPU core fault and environment 
         o_core_fault=>core_fault,
         o_ecall=>ecall,
-        o_ecall_regs=>ecall_regs
+        o_ecall_regs=>ecall_regs,
+
+        i_stall=>stall
     );
+
+    process
+    begin
+        wait for 10 ns;
+        stall <= "10000";
+        wait for 10 ns;
+        stall <= "00000";
+        -- TODO: JALR when stalling the MEM or WB
+    end process;
 
 end architecture tb_rtl;
 

@@ -13,9 +13,6 @@ entity riscy_regfile is
     port(
         i_clk, i_rst : in std_logic;
 
-        -- Register file stalling
-        i_stall     : in std_logic;
-
         -- Read port 1 (RS1)
         i_radr1     : in unsigned(4 downto 0);
         o_rdata1    : out std_logic_vector(XLEN-1 downto 0);
@@ -46,9 +43,7 @@ begin
         if rising_edge(i_clk) then
 
             -- Read port 1
-            if i_stall = '1' then
-                rdata1 <= rdata1;
-            elsif i_wena = '1' and i_radr1 > 0 and i_radr1 = i_wadr then
+            if i_wena = '1' and i_radr1 > 0 and i_radr1 = i_wadr then
                 -- Read-after-write
                 rdata1 <= i_wdata;
             else
@@ -57,9 +52,7 @@ begin
             end if;
 
             -- Read port 2
-            if i_stall = '1' then
-                rdata2 <= rdata2;
-            elsif i_wena = '1' and i_radr2 > 0 and i_radr2 = i_wadr then
+            if i_wena = '1' and i_radr2 > 0 and i_radr2 = i_wadr then
                 -- Read-after-write
                 rdata2 <= i_wdata;
             else

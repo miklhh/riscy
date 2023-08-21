@@ -26,7 +26,10 @@ entity riscy_top is
         -- CPU core fault and environment 
         o_core_fault        : out fault_type;
         o_ecall             : out std_logic;
-        o_ecall_regs        : out regfile_vector_type
+        o_ecall_regs        : out regfile_vector_type;
+
+        -- Stall injection
+        i_stall             : in std_logic_vector(0 to 4)
     );
 
 end entity riscy_top;
@@ -75,7 +78,10 @@ begin
         -- CPU core fault and environment 
         o_core_fault=>o_core_fault,
         o_ecall=>o_ecall,
-        o_ecall_regs=>o_ecall_regs
+        o_ecall_regs=>o_ecall_regs,
+
+        -- Stall injection
+        i_stall=>i_stall
     );
 
     --
