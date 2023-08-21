@@ -163,11 +163,11 @@ begin
 
     -- Instruction register pipeline (the instruction memory acts as first IR register)
     instr_pipeline : process(i_clk)
+        -- IR(0) is a combinatorial signal assigned outside of this process. The local variable
+        -- IR_local is used to mitigate multiple drivers of IR(0) that would occur due to the the
+        -- logest static prefix rule and indexing of IR(idx) in the process loop.
+        variable IR_local : IR_pipeline_type;
     begin
-
-        -- IR(0) is combinatorial signal assigned outside of the process
-        -- This assignment is to mitigate the VHDL concept: Longest Static Prefix
-        IR(0) <= (others => 'Z');
 
         if rising_edge(i_clk) then
             if i_rst = '1' then
@@ -175,7 +175,6 @@ begin
             else
                 --
                 -- The stalling logic works as following on the instruction register pipeline:
-                --
                 --   * If the stalling signal corresponding to a pipeline stage is SET (=1),
                 --     then the corresponding instruction register (IR) MUST keep its value.
                 --   * If the stalling signal corresponding to a pipeline stage is UN-SET (=0),
@@ -183,24 +182,24 @@ begin
                 --     the previous step in the instruction register pipeline (IR-1), unless the
                 --     previous step has its stall signal set, in which case the instruction
                 --     register (IR) will be set to NOP.
-                --   * If the instruction decoding stage, directly after the instruction memory,
-                --     has to stall, then temporarly saving of the instruction in the instruction
-                --     memory output has to be done in order not to lose that instruction. Once
-                --     this stage can continue again, the saved instruction needs to be put back
-                --     to the instruction register pipeline again.
                 --
                 -- NOTE: stall(n) corresponds to IR(n-1)
                 --
-                IR(1 to 3) <= IR(0 to 2);
+                IR_local := (others => (others => '1'));
                 for idx in 1 to 3 loop
                     if stall(idx+1) = '0' then
-                        if stall(idx) = '1' then
-                            IR(idx) <= NOP;
+                        if stall(idx) = '0' then
+                            IR_local(idx) := IR(idx-1);
+                        else
+                            IR_local(idx) := NOP;
                         end if;
                     else -- stall(idx+1) = '1'
-                        IR(idx) <= IR(idx);
+                        IR_local(idx) := IR(idx);
                     end if;
                 end loop;
+
+                -- Assignment of the real IR signal
+                IR(1 to 3) <= IR_local(1 to 3);
             end if;
         end if;
     end process;
@@ -581,7 +580,7 @@ begin
     stall(0) <= i_stall(0) or stall(1) or not(i_instr_mem_ready);  -- Stall(0): IF
     stall(1) <= i_stall(1) or stall(2) or id_load_stall;           -- Stall(1): ID
     stall(2) <= i_stall(2) or stall(3);                            -- Stall(2): EX
-    stall(3) <= i_stall(3) or stall(4) or load_store_o_stall;      -- Stall(3): MEM
+    stall(3) <= i_stall(3) or stall(4); --or load_store_o_stall;      -- Stall(3): MEM
     stall(4) <=                                                    -- Stall(4): WB
         '1' when i_stall(4) = '1'                                   else
         '1' when i_data_mem_ready = '0' and inst(2).opcode = LOAD   else
