@@ -580,7 +580,7 @@ begin
     stall(0) <= i_stall(0) or stall(1) or not(i_instr_mem_ready);  -- Stall(0): IF
     stall(1) <= i_stall(1) or stall(2) or id_load_stall;           -- Stall(1): ID
     stall(2) <= i_stall(2) or stall(3);                            -- Stall(2): EX
-    stall(3) <= i_stall(3) or stall(4); --or load_store_o_stall;      -- Stall(3): MEM
+    stall(3) <= i_stall(3) or stall(4) or load_store_o_stall;      -- Stall(3): MEM
     stall(4) <=                                                    -- Stall(4): WB
         '1' when i_stall(4) = '1'                                   else
         '1' when i_data_mem_ready = '0' and inst(2).opcode = LOAD   else

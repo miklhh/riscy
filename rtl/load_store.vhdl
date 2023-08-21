@@ -63,20 +63,27 @@ architecture riscy_load_store_rtl of riscy_load_store is
     -- Quick (single cycle) memory operations
     signal is_quick         : std_logic;  -- Is and aligned LB, LH, LW or SW
 
-    -- Non whole word output quick variants
+    -- Non whole word output quick load variants
     signal sign_extend      : std_logic;
     signal q_half           : std_logic_vector(XLEN-1 downto 0);
     signal q_quarter        : std_logic_vector(XLEN-1 downto 0);
+
+    -- SH and SB data concatination
+    signal sh_data          : std_logic_vector(XLEN-1 downto 0);
+    signal sb_data          : std_logic_vector(XLEN-1 downto 0);
 
     -- Delayed instruciton and target address
     signal inst_del         : inst_type;
     signal addr_del         : std_logic_vector(XLEN-1 downto 0);
 
-    -- Stalling data preservation
+    -- Input stalling data preservation
+    signal i_stall_del      : std_logic;
     signal mem_data_saved   : std_logic_vector(XLEN-1 downto 0);
     signal mem_data_mux     : std_logic_vector(XLEN-1 downto 0);
     signal data_valid_reg   : std_logic;
-    signal stall_del        : std_logic;
+
+    -- Output stalling
+    signal store_req_stall  : std_logic;
 
 begin
 
@@ -109,29 +116,14 @@ begin
     next_transaction <=
         STORE_ALIGNED   when is_aligned = '1' and do_store = '1' and i_inst.funct3 /= "010"  else
         STORE_UNALIGNED when is_aligned = '0' and do_store = '1'                             else
-        LOAD_UNALIGNED  when is_aligned = '0' and do_load  = '1'                              else
+        LOAD_UNALIGNED  when is_aligned = '0' and do_load  = '1'                             else
         WAITING;
-
-    -- Non whole word data memory reads
-    sign_extend <= not(inst_del.funct3(2));  -- Sign extension for LH, LB
-    q_half(15 downto 0) <=
-        i_mem_data(15 downto  0) when addr_del(1 downto 0) = "00" else
-        i_mem_data(31 downto 16) when addr_del(1 downto 0) = "10" else
-        (others => '-');
-    q_half(31 downto 16) <= (others => q_half(15)) when sign_extend = '1' else (others => '0');
-    q_quarter(7 downto 0) <=
-        i_mem_data( 7 downto  0) when addr_del(1 downto 0) = "00" else
-        i_mem_data(15 downto  8) when addr_del(1 downto 0) = "01" else
-        i_mem_data(23 downto 16) when addr_del(1 downto 0) = "10" else
-        i_mem_data(31 downto 24) when addr_del(1 downto 0) = "11" else
-        (others => '-');
-    q_quarter(31 downto 8) <= (others => q_quarter(7)) when sign_extend = '1' else (others => '0');
 
     -- Delayed stall signal
     process(i_clk)
     begin
         if rising_edge(i_clk) then
-            stall_del <= i_stall;
+            i_stall_del <= i_stall;
         end if;
     end process;
 
@@ -158,8 +150,13 @@ begin
                         report "STORE_UNALIGNED not implemented yet" severity failure;
                         o_fault <= MEMORY_ALIGNMENT_ERROR;
                     when STORE_ALIGNED =>
-                        report "STORE_ALIGNED not implemented yet" severity failure;
-                        o_fault <= MEMORY_ALIGNMENT_ERROR;
+                        -- Storing byte or half-word aligned data consists of performing one 
+                        -- word length load, followed by one word length store
+                        if i_stall = '1' then
+                            state <= STORE_ALIGNED;
+                        else
+                            state <= WAITING;
+                        end if;
                 end case;
             end if;
         end if;
@@ -176,29 +173,7 @@ begin
 
 
     ------------------------------------------------------------------------------------------------
-    ---                               Data memory external interface                             ---
-    ------------------------------------------------------------------------------------------------
-
-    o_mem_addr <=
-        i_addr when state = WAITING and is_quick = '1' else
-        (others => '-');
-
-    o_mem_data <=
-        i_data when state = WAITING and is_quick = '1' else
-        (others => '-');
-
-    o_mem_we <=
-        '1' when state = WAITING and is_quick = '1' and i_mem_ready = '1' and do_store = '1' else
-        '0';
-
-    o_mem_ena <=
-        '1' when state = WAITING and is_quick = '1' and i_mem_ready = '1' and 
-                 (do_store = '1' or do_load = '1') else
-        '0';
-
-
-    ------------------------------------------------------------------------------------------------
-    ---                            Load-store unit external interface                            ---
+    ---                                   Data re-ordering                                       ---
     ------------------------------------------------------------------------------------------------
 
     mem_data_mux <=
@@ -207,11 +182,66 @@ begin
         i_mem_data  when inst_del.funct3(1 downto 0) = "10" else  -- LW
         (others => '-');
 
+    -- Non whole word data memory reads
+    sign_extend <= not(inst_del.funct3(2));  -- Sign extension for LH, LB
+    q_half(15 downto 0) <=
+        i_mem_data(15 downto  0) when addr_del(1 downto 0) = "00" else
+        i_mem_data(31 downto 16) when addr_del(1 downto 0) = "10" else
+        (others => '-');
+    q_half(31 downto 16) <= (others => q_half(15)) when sign_extend = '1' else (others => '0');
+    q_quarter(7 downto 0) <=
+        i_mem_data( 7 downto  0) when addr_del(1 downto 0) = "00" else
+        i_mem_data(15 downto  8) when addr_del(1 downto 0) = "01" else
+        i_mem_data(23 downto 16) when addr_del(1 downto 0) = "10" else
+        i_mem_data(31 downto 24) when addr_del(1 downto 0) = "11" else
+        (others => '-');
+    q_quarter(31 downto 8) <= (others => q_quarter(7)) when sign_extend = '1' else (others => '0');
+
+    sh_data <=
+        i_mem_data(31 downto 16) &     i_data(15 downto 0) when i_addr(1 downto 0) = "00" else
+            i_data(15 downto  0) & i_mem_data(15 downto 0) when i_addr(1 downto 0) = "10" else
+        (others => '-');
+
+
+    ------------------------------------------------------------------------------------------------
+    ---                               Data memory external interface                             ---
+    ------------------------------------------------------------------------------------------------
+
+    o_mem_addr <= i_addr;
+
+    o_mem_data <=
+        i_data  when state = WAITING and is_quick = '1'                   else
+        sh_data when state = STORE_ALIGNED else
+        (others => '-');
+
+    o_mem_we <=
+        '1' when state = WAITING and is_quick = '1' and do_store = '1' else
+        '1' when state = STORE_ALIGNED                                 else
+        '0';
+
+    o_mem_ena <=
+        -- Quick LOADS and STORES:
+        '1' when state = WAITING and is_quick = '1' and do_store = '1' else
+        '1' when state = WAITING and is_quick = '1' and do_load  = '1' else
+        -- Aligned SH, SB:
+        '1' when state = WAITING and is_aligned = '1' and do_store = '1' else
+        '1' when state = STORE_ALIGNED                                   else
+        '0';
+
+    store_req_stall <=
+        '1' when state = WAITING and is_aligned = '1' and is_quick = '0' and do_store = '1' else
+        '0';
+
+
+    ------------------------------------------------------------------------------------------------
+    ---                            Load-store unit external interface                            ---
+    ------------------------------------------------------------------------------------------------
+
     -- Saved memory data logic
     process(i_clk)
     begin
         if rising_edge(i_clk) then
-            if i_stall = '1' and stall_del = '0' then
+            if i_stall = '1' and i_stall_del = '0' then
                 mem_data_saved <= mem_data_mux;
             else
                 mem_data_saved <= mem_data_saved;
@@ -220,7 +250,7 @@ begin
     end process;
 
     -- Data valid logic
-    process(all)
+    process(i_clk)
     begin
         if rising_edge(i_clk) then
             if i_stall = '1' then
@@ -239,11 +269,13 @@ begin
     -- Load instruction data selection logic
     process(all)
     begin
-        if stall_del = '1' then
+        if i_stall_del = '1' then
             o_data <= mem_data_saved;
         else
             o_data <= mem_data_mux;
         end if;
     end process;
+
+    o_stall <= store_req_stall;
 
 end architecture riscy_load_store_rtl;

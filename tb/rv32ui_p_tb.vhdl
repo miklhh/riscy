@@ -112,14 +112,14 @@ begin
         i_stall=>stall
     );
 
-    process
-    begin
-        wait for 10 ns;
-        stall <= "10000";
-        wait for 10 ns;
-        stall <= "00000";
-        -- TODO: JALR when stalling the MEM or WB
-    end process;
+    stall <= (others => '0');
+    --process
+    --begin
+    --    wait for 10 ns;
+    --    stall <= "01000";
+    --    wait for 10 ns;
+    --    stall <= "00000";
+    --end process;
 
 end architecture tb_rtl;
 
