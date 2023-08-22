@@ -116,7 +116,7 @@ begin
     --process
     --begin
     --    wait for 10 ns;
-    --    stall <= "01000";
+    --    stall <= "00100";
     --    wait for 10 ns;
     --    stall <= "00000";
     --end process;

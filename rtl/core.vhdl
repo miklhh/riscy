@@ -146,10 +146,10 @@ begin
                 PC <= (others => (others => '0'));
             else
                 PC(0) <= PC_mux;  -- Stalling of PC(0) is handeled in PC mux
-                PC(1) <= (stall(1) and PC(1)) or (not(stall(1)) and PC(0));
-                PC(2) <= (stall(2) and PC(2)) or (not(stall(2)) and PC(1));
-                PC(3) <= (stall(3) and PC(3)) or (not(stall(3)) and PC(2));
-                PC(4) <= (stall(4) and PC(4)) or (not(stall(4)) and PC(3));
+                if stall(1) = '1' then PC(1) <= PC(1); else PC(1) <= PC(0); end if;
+                if stall(2) = '1' then PC(2) <= PC(2); else PC(2) <= PC(1); end if;
+                if stall(3) = '1' then PC(3) <= PC(3); else PC(3) <= PC(2); end if;
+                if stall(4) = '1' then PC(4) <= PC(4); else PC(4) <= PC(3); end if;
             end if;
         end if;
     end process;

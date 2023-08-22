@@ -184,23 +184,43 @@ begin
 
     -- Non whole word data memory reads
     sign_extend <= not(inst_del.funct3(2));  -- Sign extension for LH, LB
+
     q_half(15 downto 0) <=
         i_mem_data(15 downto  0) when addr_del(1 downto 0) = "00" else
         i_mem_data(31 downto 16) when addr_del(1 downto 0) = "10" else
         (others => '-');
+
     q_half(31 downto 16) <= (others => q_half(15)) when sign_extend = '1' else (others => '0');
+
     q_quarter(7 downto 0) <=
         i_mem_data( 7 downto  0) when addr_del(1 downto 0) = "00" else
         i_mem_data(15 downto  8) when addr_del(1 downto 0) = "01" else
         i_mem_data(23 downto 16) when addr_del(1 downto 0) = "10" else
         i_mem_data(31 downto 24) when addr_del(1 downto 0) = "11" else
         (others => '-');
+
     q_quarter(31 downto 8) <= (others => q_quarter(7)) when sign_extend = '1' else (others => '0');
 
-    sh_data <=
-        i_mem_data(31 downto 16) &     i_data(15 downto 0) when i_addr(1 downto 0) = "00" else
-            i_data(15 downto  0) & i_mem_data(15 downto 0) when i_addr(1 downto 0) = "10" else
-        (others => '-');
+    process(all)
+    begin
+        case i_addr(1 downto 0) is
+            when "00" =>
+                sh_data <= i_mem_data(31 downto 16) & i_data(15 downto 0);
+                sb_data <= i_mem_data(31 downto  8) & i_data( 7 downto 0);
+            when "01" =>
+                sh_data <= (others => '-');
+                sb_data <= i_mem_data(31 downto 16) & i_data(7 downto 0) & i_mem_data(7 downto 0);
+            when "10" =>
+                sh_data <= i_data(15 downto  0)     & i_mem_data(15 downto 0);
+                sb_data <= i_mem_data(31 downto 24) & i_data(7 downto 0) & i_mem_data(15 downto 0);
+            when "11" => 
+                sh_data <= (others => '-');
+                sb_data <= i_data(7 downto 0) & i_mem_data(23 downto 0);
+            when others =>
+                sh_data <= (others => '-');
+                sb_data <= (others => '-');
+        end case;
+    end process;
 
 
     ------------------------------------------------------------------------------------------------
@@ -210,8 +230,9 @@ begin
     o_mem_addr <= i_addr;
 
     o_mem_data <=
-        i_data  when state = WAITING and is_quick = '1'                   else
-        sh_data when state = STORE_ALIGNED else
+        i_data  when state = WAITING and is_quick = '1'              else
+        sb_data when state = STORE_ALIGNED and i_inst.funct3 = "000" else
+        sh_data when state = STORE_ALIGNED and i_inst.funct3 = "001" else
         (others => '-');
 
     o_mem_we <=
@@ -221,8 +242,8 @@ begin
 
     o_mem_ena <=
         -- Quick LOADS and STORES:
-        '1' when state = WAITING and is_quick = '1' and do_store = '1' else
-        '1' when state = WAITING and is_quick = '1' and do_load  = '1' else
+        '1' when state = WAITING and is_quick = '1' and do_store = '1'   else
+        '1' when state = WAITING and is_quick = '1' and do_load  = '1'   else
         -- Aligned SH, SB:
         '1' when state = WAITING and is_aligned = '1' and do_store = '1' else
         '1' when state = STORE_ALIGNED                                   else
