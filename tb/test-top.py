@@ -23,6 +23,7 @@ lib.add_source_files([
 ])
 lib.set_compile_option("modelsim.vcom_flags", ["-2008", "-check_synthesis", "+acc=rnb"])
 #lib.set_sim_option("modelsim.vsim_flags", ["-novopt"])
+lib.set_sim_option("modelsim.vsim_flags",["-voptargs=+acc=rnb"])
 
 # VHDL testbench
 rv32ui_p_tb = lib.test_bench("rv32ui_p_tb")
